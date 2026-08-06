@@ -1,0 +1,15 @@
+.git
+.gitignore
+.venv
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.vscode/
+tests/
+k8s/
+scripts/
+README.md
+requirements-dev.txt
+*.bak
+kubeconfig
