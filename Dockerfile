@@ -23,6 +23,9 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY app ./app
 
+ARG APP_VERSION=dev
+ENV APP_VERSION=${APP_VERSION}
+
 USER appuser
 
 EXPOSE 8000
