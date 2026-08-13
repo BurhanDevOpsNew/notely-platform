@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+configMapGenerator:
+  - name: notely-config
+    literals:
+      - APP_VERSION=prod
+
+images:
+  - name: notely
+    newName: ghcr.io/burhandevopsnew/notely-platform
+    newTag: latest
+
+replicas:
+  - name: notely
+    count: 3
