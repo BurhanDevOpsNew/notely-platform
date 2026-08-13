@@ -3,11 +3,19 @@ kind: Kustomization
 
 resources:
   - ../../base
+  - ../../postgres
 
 configMapGenerator:
   - name: notely-config
     literals:
       - APP_VERSION=local-kustomize-2
+
+secretGenerator:
+  - name: postgres-credentials
+    literals:
+      - POSTGRES_DB=notely
+      - POSTGRES_USER=notely
+      - POSTGRES_PASSWORD=nur-lokal-zum-lernen
 
 images:
   - name: notely
