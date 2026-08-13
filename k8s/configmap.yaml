@@ -1,6 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: notely-config
-data:
-  APP_VERSION: "Kind-local-1"
