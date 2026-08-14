@@ -13,6 +13,21 @@ jobs:
     name: Lint & Test
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: notely_test
+          POSTGRES_USER: notely
+          POSTGRES_PASSWORD: notely
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U notely -d notely_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+          
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,6 +46,8 @@ jobs:
 
       - name: Test
         run: pytest -q
+        env:
+          DATABASE_URL: postgresql+psycopg://notely:notely@localhost:5432/notely_test
 
   image:
     name: Build & push image

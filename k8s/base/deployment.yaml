@@ -27,6 +27,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: notely-config
+            - secretRef:
+                name: notely-db
           resources:
             requests:
               cpu: 50m

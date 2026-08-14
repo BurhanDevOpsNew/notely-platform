@@ -1,10 +1,23 @@
+import os
+
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
-from app.main import _notes, app
+os.environ.setdefault(
+    "DATABASE_URL",
+    "postgresql+psycopg://notely:notely@localhost:5432/notely_test",
+)
+
+from app.db import Base, SessionLocal, engine  # noqa: E402
+from app.main import app  # noqa: E402
+
 
 @pytest.fixture
 def client():
-    _notes.clear()  # Clear the notes dictionary before each test
+    Base.metadata.create_all(bind=engine)
+    with SessionLocal() as session:
+        session.execute(text("TRUNCATE TABLE notes"))
+        session.commit()
     with TestClient(app) as c:
         yield c
