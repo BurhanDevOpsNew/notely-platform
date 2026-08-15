@@ -22,6 +22,8 @@ WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
 COPY app ./app
+COPY alembic.ini . 
+COPY alembic ./alembic
 
 ARG APP_VERSION=dev
 ENV APP_VERSION=${APP_VERSION}

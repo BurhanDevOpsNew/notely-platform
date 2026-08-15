@@ -50,6 +50,9 @@ Code → Container → CI/CD → Kubernetes → Observability.
   kubectl rollout restart deployment/notely      # Tag bleibt "dev" → sonst keine Änderung
   podman exec notely-control-plane crictl images # Kontrolle
   ```
+  Vor `kubectl apply -k k8s/overlays/local` gehört seit Etappe 6 immer:
+  `kubectl delete job notely-migrate --ignore-not-found` (Job-`spec` ist unveränderlich).
+
   `rollout restart` ist **nur** nötig, wenn sich ausschließlich der Image-*Inhalt* ändert.
   Ändert ein `configMapGenerator`/`secretGenerator` seinen Hash, ändert sich das
   Pod-Template und Kubernetes rollt von selbst. Merksatz: **Kubernetes reagiert auf
@@ -65,7 +68,10 @@ Code → Container → CI/CD → Kubernetes → Observability.
 app/            main.py (FastAPI), models.py (SQLAlchemy + Pydantic), db.py (Engine/Session)
 tests/          conftest.py, test_api.py (7 Tests, prüfen nur HTTP-Verhalten)
 cluster/        kind-cluster.yaml   (kind-CLI-Config, KEINE k8s-Ressource)
-k8s/base/       deployment.yaml, service.yaml, ingress.yaml, kustomization.yaml
+alembic/        env.py (DB-URL aus Env, target_metadata), script.py.mako (Vorlage,
+                deutsch — sonst kommt jede neue Migration englisch heraus), versions/
+alembic.ini     Konfig; `sqlalchemy.url` ist bewusst auskommentiert
+k8s/base/       deployment.yaml, service.yaml, ingress.yaml, job.yaml, kustomization.yaml
 k8s/postgres/   pvc.yaml, deployment.yaml, service.yaml, kustomization.yaml
 k8s/overlays/   local/kustomization.yaml, prod/kustomization.yaml
 .github/workflows/ci.yml
@@ -109,26 +115,59 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
    *Datenbank* weg war → Kaskadenausfall. **Regel: Liveness fragt „bin ich kaputt?",
    Readiness fragt „kann ich gerade arbeiten?" — fremde Abhängigkeiten nur in Readiness.**
 
+6. **Alembic statt `create_all`** (Etappe 6, Branch `feature/alembic`) — `alembic/env.py`
+   liest `DATABASE_URL` aus der Umgebung (`config.set_main_option`, `%` → `%%` wegen
+   configparser) und scheitert laut, wenn sie fehlt; `target_metadata = Base.metadata`.
+   Erste Revision `8896812e8bac` legt `notes` an. `lifespan` und `create_all` aus
+   `app/main.py` entfernt — **die App ist nicht mehr fürs Schema zuständig.**
+
+   **Der Import, an dem alles hängt:** `from app.models import Note  # noqa: F401` in
+   `env.py`. SQLAlchemy registriert eine Tabelle in `Base.metadata` erst beim Import des
+   Moduls. Fehlt die Zeile, sind die Metadaten leer, und `--autogenerate` liest das als
+   „Tabelle soll weg" → es erzeugt ein `drop_table("notes")`. Ein vermeintlich ungenutzter
+   Import, dessen Entfernen Daten löscht. Deshalb `noqa` **und** Kommentar.
+
+   **`--autogenerate` ist ein Entwurf, keine Wahrheit.** Es erkennt keine Umbenennungen:
+   aus `body` → `content` macht es `drop_column` + `add_column`, also stiller Datenverlust.
+   Ebenfalls blind bei `server_default` und CHECK-Constraints. Jede generierte Migration
+   wird gelesen, bevor sie läuft.
+
+   **Tests fahren die Migration mit** — `tests/conftest.py` ruft `command.upgrade(cfg, "head")`
+   in einer `scope="session"`-Fixture, die `client` per Parameter anfordert (deklarierte
+   Abhängigkeit statt Verlass auf Fixture-Reihenfolge). Damit prüft die CI die Migrationen
+   automatisch mit; in `ci.yml` steht dafür bewusst nichts Zusätzliches. Dazu die
+   `assert …endswith("_test")`-Absicherung gegen ein `TRUNCATE` auf der Entwicklungs-DB.
+
+   **Migration im Cluster: `k8s/base/job.yaml`**, `command: ["alembic","upgrade","head"]`,
+   gleiches Image wie die App. Kein `initContainer` — der liefe in *jedem* der 2 Pods,
+   also zwei gleichzeitige Migrationen. `restartPolicy: Never` (neuer Pod je Versuch, Logs
+   bleiben lesbar), `backoffLimit: 3`, `ttlSecondsAfterFinished: 300`.
+
+   **Bewiesen:** `notes`, `alembic_version` und das Überbleibsel `persistenz_test` in der
+   Cluster-DB gelöscht → Job neu angewendet → `COMPLETIONS 1/1`, Log
+   `Running upgrade  -> 8896812e8bac`, Tabellen wieder da, `GET /notes` → `[]`.
+   **`[]` statt `relation "notes" does not exist` ist der Beweis** — leere Liste heißt
+   „Tabelle da, nichts drin".
+
+   **Bestehende DB übernehmen: `alembic stamp head`.** Schreibt nur die Versionsnummer in
+   `alembic_version`, führt kein SQL aus. Nötig, weil die Cluster-DB die von `create_all`
+   angelegte Tabelle schon hatte; `upgrade head` wäre an `relation "notes" already exists`
+   gestorben. Du behauptest damit, das Schema passe zur Migration — stimmt das nicht,
+   merkst du es erst bei der nächsten Migration.
+
 ## Wo wir gerade stehen
-`main` = `7e70e47` (Merge PR #12), Arbeitsverzeichnis sauber, Etappe 5 Teil A+B fertig.
-Nächster Schritt: **Alembic** (siehe unten).
+Branch `feature/alembic`, Etappe 6 Teil A+B fertig und im Cluster bewiesen.
+Offen auf dem Branch: CLAUDE.md committen, PR, Merge.
 
 ## 🔴 Offene Punkte
-1. **`tests/conftest.py` — stille Umgebungsübernahme.** Zeile 7 nutzt
-   `os.environ.setdefault`, eine bereits gesetzte `DATABASE_URL` gewinnt also. In der CI
-   ist das gewollt. Lokal: wer für einen manuellen `uvicorn`-Start
-   `export DATABASE_URL=...@localhost:5432/notely` macht und im selben Terminal `pytest`
-   startet, lässt das `TRUNCATE TABLE notes` der Fixture auf die **Entwicklungs-DB** laufen.
-   Keine Warnung, Tests grün, Daten weg. Absicherung (noch nicht eingebaut), direkt nach
-   dem `setdefault`-Block:
-   ```python
-   assert os.environ["DATABASE_URL"].endswith("_test"), (
-       "Refusing to run tests against a non-test database: "
-       f"{os.environ['DATABASE_URL']}"
-   )
-   ```
-   Bewusst eine Zusicherung statt hartem Überschreiben: die CI darf einen anderen Host
-   setzen, nur das Gefährliche wird verboten.
+1. **Job und Deployment werden gleichzeitig angewendet.** `kubectl apply -k` kennt keine
+   Reihenfolge — es gibt keine Garantie, dass die Migration vor den App-Pods fertig ist.
+   Unkritisch, solange `/readyz` nur `SELECT 1` prüft: die Pods werden bereit, `GET /notes`
+   scheitert für ein paar Sekunden. Echte Reihenfolge gäbe es mit Helm-Hooks,
+   ArgoCD-Sync-Waves oder einem `initContainer`, der auf die Job-Completion wartet.
+   Dazu: **die `spec` eines Jobs ist unveränderlich.** Ein zweites `apply` auf denselben
+   Job-Namen bringt `field is immutable` — deshalb gehört
+   `kubectl delete job notely-migrate --ignore-not-found` vor jedes `apply`.
 2. **`k8s/overlays/prod` kennt kein `notely-db`-Secret.** `base/deployment.yaml` verlangt es
    seit PR #12 per `envFrom`. `kubectl kustomize k8s/overlays/prod` läuft trotzdem durch
    (kustomize prüft keine Existenz), die Pods gingen aber in `CreateContainerConfigError`.
@@ -138,13 +177,10 @@ Nächster Schritt: **Alembic** (siehe unten).
    `.pyc`-Dateien, die zur Laufzeit niemand braucht. `pip install --no-compile` plus
    `pip uninstall -y pip setuptools` im Builder holen ~25 MB.
 
-## Danach geplant (Etappe 5, Rest)
-- **Alembic** statt `Base.metadata.create_all` (`app/main.py`, `lifespan`) — nächster Schritt.
-  Warum `create_all` nicht reicht: es legt **fehlende Tabellen** an und tut sonst nichts —
-  keine Spaltenänderung, keine Datenmigration. Nach einem Schema-Zusatz passiert beim Deploy
-  nichts, und der erste `SELECT` stirbt an `column does not exist`. Dazu läuft es derzeit in
-  **beiden** Pods gleichzeitig = Wettrennen. Migrationen gehören **einmal** vor den Rollout,
-  als k8s-`Job` oder `initContainer`, nicht in jeden Pod.
+## Danach geplant
+- **Zweite Migration üben** — eine Spalte hinzufügen, `alembic revision --autogenerate`,
+  Datei lesen, Job laufen lassen. Erst dann ist der Kreislauf einmal komplett durchlaufen;
+  bisher gibt es nur die Initial-Migration.
 - Trivy-Image-Scan + SBOM in der CI.
 - Strukturiertes JSON-Logging, Prometheus `/metrics`.
 - Echte Secret-Verwaltung: SOPS / Sealed Secrets / External Secrets Operator.
