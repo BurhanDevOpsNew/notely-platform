@@ -78,7 +78,7 @@ k8s/overlays/   local/kustomization.yaml, prod/kustomization.yaml
 Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
 ```
 
-## Was schon fertig ist (in `main`, PR #13 = `15a7eea`)
+## Was schon fertig ist (in `main`, PR #14 = `7411232`)
 1. **API + Tests** — `/healthz`, `/readyz`, CRUD `/notes`, `APP_VERSION` aus Env. 7 pytest-Tests, ruff sauber.
 2. **Container** — Multi-Stage Dockerfile, `python:3.12-slim`, non-root uid 10001,
    `ARG/ENV APP_VERSION` ganz unten (Layer-Cache), exec-form CMD, `--host 0.0.0.0`.
@@ -192,8 +192,8 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
    das Problem liegt — ohne eine Zeile Traceback zu lesen.**
 
 ## Wo wir gerade stehen
-`main` = `15a7eea` (Merge PR #13), Arbeitsverzeichnis sauber, Etappe 6 fertig.
-Nächster Schritt: **zweite Migration üben** (siehe „Danach geplant").
+`main` = `7411232` (Merge PR #14), Arbeitsverzeichnis sauber, Etappe 7 fertig.
+Nächster Schritt: **`PATCH /notes/{id}`** (siehe „Danach geplant").
 
 ## 🔴 Offene Punkte
 1. **Job und Deployment werden gleichzeitig angewendet.** `kubectl apply -k` kennt keine
