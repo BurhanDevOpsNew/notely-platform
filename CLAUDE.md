@@ -155,6 +155,42 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
    gestorben. Du behauptest damit, das Schema passe zur Migration — stimmt das nicht,
    merkst du es erst bei der nächsten Migration.
 
+7. **Zweite Migration: `archived`-Spalte** (Etappe 7, Branch `feature/note-archived`) —
+   `82c2ae8bf5e0`, hängt per `down_revision` an `8896812e8bac`. Migrationen sind eine
+   **Kette**, nicht eine Menge von Dateien; `upgrade head` läuft sie ab der aktuellen
+   Position ab. Deshalb ist die Reihenfolge unabhängig von Dateiname und Datum.
+
+   **Die Lektion der Etappe — `default=` ≠ `server_default=`:**
+   Das autogenerierte `op.add_column(..., nullable=False)` **ohne** `server_default` lief
+   lokal durch (Test-DB: 0 Zeilen) und wäre im Cluster (1 Zeile) gestorben an
+   `NotNullViolation: column "archived" of relation "notes" contains null values`,
+   SQL: `ALTER TABLE notes ADD COLUMN archived BOOLEAN NOT NULL`.
+
+   | | wirkt bei |
+   |---|---|
+   | `default=False` | `Note()` in **Python** — Postgres kennt es nicht |
+   | `server_default=text("false")` | jedem `INSERT` **und** beim `ALTER TABLE` für bestehende Zeilen |
+
+   Fix: `server_default=sa.text('false')` in der Migration **und** `server_default` im
+   Modell, damit Modell und Datenbank dasselbe behaupten. Beides zusammen mit `default=`,
+   damit ein frisches `Note`-Objekt in Python sofort `False` hat statt `None`.
+
+   **Die Gewohnheit, die daraus folgt: Produktionsbedingung lokal nachbauen.** Statt zu
+   deployen und im Job-Log zu suchen — eine Zeile in die Test-DB einfügen
+   (`INSERT ... gen_random_uuid(), now()`), Migration laufen lassen, Fehler in Sekunden
+   statt in Minuten sehen. Danach mit *derselben* Datenlage erneut → geht durch. Das
+   beweist den Fix; eine geleerte Tabelle hätte das Problem nur versteckt.
+
+   **Nebenbefund:** Der fehlgeschlagene `ALTER TABLE` hinterließ nichts — Postgres führt
+   DDL transaktional aus (`Will assume transactional DDL` in jeder Alembic-Ausgabe).
+   Nichts halb angelegt, Zeile unversehrt.
+
+   **Und: die Tests haben es gemerkt.** Nach der Modelländerung ohne Migration waren
+   4 von 7 rot — genau die, die `notes` anfassen. Das Modell erzeugt das SQL, also steht
+   `notes.archived` sofort in jedem `SELECT`. Die 3 grünen (`/healthz`, `/readyz`,
+   422-Validierung) berühren die Tabelle nie. **Welche Tests fehlschlagen, sagt dir, wo
+   das Problem liegt — ohne eine Zeile Traceback zu lesen.**
+
 ## Wo wir gerade stehen
 `main` = `15a7eea` (Merge PR #13), Arbeitsverzeichnis sauber, Etappe 6 fertig.
 Nächster Schritt: **zweite Migration üben** (siehe „Danach geplant").
@@ -178,9 +214,8 @@ Nächster Schritt: **zweite Migration üben** (siehe „Danach geplant").
    `pip uninstall -y pip setuptools` im Builder holen ~25 MB.
 
 ## Danach geplant
-- **Zweite Migration üben** — eine Spalte hinzufügen, `alembic revision --autogenerate`,
-  Datei lesen, Job laufen lassen. Erst dann ist der Kreislauf einmal komplett durchlaufen;
-  bisher gibt es nur die Initial-Migration.
+- **`PATCH /notes/{id}` zum Archivieren** — die Spalte `archived` ist da, aber kein
+  Endpunkt setzt sie. Braucht ein `NoteUpdate`-Schema mit optionalen Feldern.
 - Trivy-Image-Scan + SBOM in der CI.
 - Strukturiertes JSON-Logging, Prometheus `/metrics`.
 - Echte Secret-Verwaltung: SOPS / Sealed Secrets / External Secrets Operator.
