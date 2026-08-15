@@ -78,7 +78,7 @@ k8s/overlays/   local/kustomization.yaml, prod/kustomization.yaml
 Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
 ```
 
-## Was schon fertig ist (in `main`, PR #14 = `7411232`)
+## Was schon fertig ist (in `main`, PR #15 = `0c8a344`)
 1. **API + Tests** — `/healthz`, `/readyz`, CRUD `/notes`, `APP_VERSION` aus Env. 7 pytest-Tests, ruff sauber.
 2. **Container** — Multi-Stage Dockerfile, `python:3.12-slim`, non-root uid 10001,
    `ARG/ENV APP_VERSION` ganz unten (Layer-Cache), exec-form CMD, `--host 0.0.0.0`.
@@ -225,8 +225,8 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
    Tests: 7 → **11**.
 
 ## Wo wir gerade stehen
-`main` = `7411232` (Merge PR #14), Arbeitsverzeichnis sauber, Etappe 7 fertig.
-Nächster Schritt: **`PATCH /notes/{id}`** (siehe „Danach geplant").
+`main` = `0c8a344` (Merge PR #15), Arbeitsverzeichnis sauber, Etappe 8 fertig.
+Nächster Schritt: **Trivy + SBOM in der CI** (siehe „Danach geplant").
 
 ## 🔴 Offene Punkte
 1. **Job und Deployment werden gleichzeitig angewendet.** `kubectl apply -k` kennt keine
