@@ -78,7 +78,7 @@ k8s/overlays/   local/kustomization.yaml, prod/kustomization.yaml
 Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
 ```
 
-## Was schon fertig ist (in `main`, PR #12 = `7e70e47`)
+## Was schon fertig ist (in `main`, PR #13 = `15a7eea`)
 1. **API + Tests** — `/healthz`, `/readyz`, CRUD `/notes`, `APP_VERSION` aus Env. 7 pytest-Tests, ruff sauber.
 2. **Container** — Multi-Stage Dockerfile, `python:3.12-slim`, non-root uid 10001,
    `ARG/ENV APP_VERSION` ganz unten (Layer-Cache), exec-form CMD, `--host 0.0.0.0`.
@@ -156,8 +156,8 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
    merkst du es erst bei der nächsten Migration.
 
 ## Wo wir gerade stehen
-Branch `feature/alembic`, Etappe 6 Teil A+B fertig und im Cluster bewiesen.
-Offen auf dem Branch: CLAUDE.md committen, PR, Merge.
+`main` = `15a7eea` (Merge PR #13), Arbeitsverzeichnis sauber, Etappe 6 fertig.
+Nächster Schritt: **zweite Migration üben** (siehe „Danach geplant").
 
 ## 🔴 Offene Punkte
 1. **Job und Deployment werden gleichzeitig angewendet.** `kubectl apply -k` kennt keine
