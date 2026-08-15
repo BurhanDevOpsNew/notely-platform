@@ -78,7 +78,7 @@ k8s/overlays/   local/kustomization.yaml, prod/kustomization.yaml
 Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
 ```
 
-## Was schon fertig ist (in `main`, PR #13 = `15a7eea`)
+## Was schon fertig ist (in `main`, PR #14 = `7411232`)
 1. **API + Tests** — `/healthz`, `/readyz`, CRUD `/notes`, `APP_VERSION` aus Env. 7 pytest-Tests, ruff sauber.
 2. **Container** — Multi-Stage Dockerfile, `python:3.12-slim`, non-root uid 10001,
    `ARG/ENV APP_VERSION` ganz unten (Layer-Cache), exec-form CMD, `--host 0.0.0.0`.
@@ -191,9 +191,42 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
    422-Validierung) berühren die Tabelle nie. **Welche Tests fehlschlagen, sagt dir, wo
    das Problem liegt — ohne eine Zeile Traceback zu lesen.**
 
+8. **`PATCH /notes/{id}`** (Etappe 8, Branch `feature/patch-notes`) — drittes Schema
+   `NoteUpdate` mit ausschließlich optionalen Feldern (`str | None = Field(default=None, …)`).
+   Erbt bewusst **nicht** von `NoteCreate`: dort ist `title` Pflicht, hier optional — genau
+   der Unterschied, den Vererbung verwischen würde. Drei Verträge für eine Tabelle:
+   **Anlegen, Ändern und Lesen sind verschiedene Operationen mit verschiedenen Regeln.**
+
+   **Die Zeile, um die es geht:**
+   ```python
+   for field, value in payload.model_dump(exclude_unset=True, exclude_none=True).items():
+       setattr(note, field, value)
+   ```
+   | Option | schließt aus |
+   |---|---|
+   | `exclude_unset=True` | Felder, die der Client **gar nicht geschickt** hat |
+   | `exclude_none=True` | Felder, die er **ausdrücklich als `null`** geschickt hat |
+
+   Ohne `exclude_unset` enthielte das Dict alle Felder, die nicht geschickten mit `None` —
+   ein `{"archived": true}` würde `title` und `body` **löschen**. Ohne `exclude_none` gäbe
+   `{"title": null}` einen `IntegrityError` und HTTP 500, weil keine Spalte NULL sein darf.
+   Abgesichert durch `test_patch_keeps_unmentioned_fields` — ein Test für genau eine
+   Codezeile, und zwar die, deren Fehlen still Daten zerstört.
+
+   **Getippte Pfad-Parameter prüfen vor der Funktion.** `note_id: UUID` in der Signatur →
+   FastAPI antwortet auf eine ungültige ID mit 422 und
+   `"loc":["path","note_id"]`, bevor `session.get` überhaupt läuft. Kein eigener Prüfcode,
+   bessere Meldung.
+
+   **Kein `apply`, kein Job** — es hat sich weder ein Manifest noch das Schema geändert,
+   nur der Image-*Inhalt*. Also nur `rollout restart`. Die drei Fälle:
+   Manifest → `apply -k`; Schema → `delete job` + `apply -k`; nur Image → `rollout restart`.
+
+   Tests: 7 → **11**.
+
 ## Wo wir gerade stehen
-`main` = `15a7eea` (Merge PR #13), Arbeitsverzeichnis sauber, Etappe 6 fertig.
-Nächster Schritt: **zweite Migration üben** (siehe „Danach geplant").
+`main` = `7411232` (Merge PR #14), Arbeitsverzeichnis sauber, Etappe 7 fertig.
+Nächster Schritt: **`PATCH /notes/{id}`** (siehe „Danach geplant").
 
 ## 🔴 Offene Punkte
 1. **Job und Deployment werden gleichzeitig angewendet.** `kubectl apply -k` kennt keine
@@ -214,9 +247,8 @@ Nächster Schritt: **zweite Migration üben** (siehe „Danach geplant").
    `pip uninstall -y pip setuptools` im Builder holen ~25 MB.
 
 ## Danach geplant
-- **`PATCH /notes/{id}` zum Archivieren** — die Spalte `archived` ist da, aber kein
-  Endpunkt setzt sie. Braucht ein `NoteUpdate`-Schema mit optionalen Feldern.
-- Trivy-Image-Scan + SBOM in der CI.
+- **Trivy-Image-Scan + SBOM in der CI** — der naheliegendste nächste Schritt: bisher prüft
+  die CI nur den Code, nicht das Artefakt, das tatsächlich deployt wird.
 - Strukturiertes JSON-Logging, Prometheus `/metrics`.
 - Echte Secret-Verwaltung: SOPS / Sealed Secrets / External Secrets Operator.
   (Aktuell steht das Postgres-Passwort im Klartext im Git — bewusst, nur für die lokale

@@ -7,7 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.db import get_session
-from app.models import Note, NoteCreate, NoteRead
+from app.models import Note, NoteCreate, NoteRead, NoteUpdate
 
 APP_VERSION = os.getenv("APP_VERSION", "dev")
 
@@ -49,6 +49,21 @@ def get_note(note_id: UUID, session: Session = Depends(get_session)) -> Note:
     note = session.get(Note, note_id)
     if note is None:
         raise HTTPException(status_code=404, detail="Note not found")
+    return note
+
+
+@app.patch("/notes/{note_id}", response_model=NoteRead)
+def update_note(
+    note_id: UUID,
+    payload: NoteUpdate,
+    session: Session = Depends(get_session),
+) -> Note:
+    note = session.get(Note, note_id)
+    if note is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+    for field, value in payload.model_dump(exclude_unset=True, exclude_none=True).items():
+        setattr(note, field, value)
+    session.commit()
     return note
 
 
