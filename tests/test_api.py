@@ -36,3 +36,38 @@ def test_delete_note(client):
 
 def test_create_note_rejects_empty_title(client):
     assert client.post("/notes", json={"title": ""}).status_code == 422
+
+def test_patch_archives_note(client):
+    note = client.post("/notes", json={"title": "Zu archivieren"}).json()
+    assert note["archived"] is False
+
+    r = client.patch(f"/notes/{note['id']}", json={"archived": True})
+    assert r.status_code == 200
+    assert r.json()["archived"] is True
+
+
+def test_patch_keeps_unmentioned_fields(client):
+    note = client.post(
+        "/notes", json={"title": "Bleibt", "body": "Auch das bleibt"}
+    ).json()
+
+    r = client.patch(f"/notes/{note['id']}", json={"archived": True})
+    assert r.status_code == 200
+
+    updated = r.json()
+    assert updated["title"] == "Bleibt"
+    assert updated["body"] == "Auch das bleibt"
+    assert updated["archived"] is True
+
+
+def test_patch_rejects_empty_title(client):
+    note = client.post("/notes", json={"title": "Gültig"}).json()
+    r = client.patch(f"/notes/{note['id']}", json={"title": ""})
+    assert r.status_code == 422
+
+
+def test_patch_unknown_note_returns_404(client):
+    r = client.patch(
+        "/notes/00000000-0000-0000-0000-000000000000", json={"archived": True}
+    )
+    assert r.status_code == 404

@@ -31,6 +31,14 @@ class NoteCreate(BaseModel):
     body: str = Field(default="", max_length=10_000)
 
 
+class NoteUpdate(BaseModel):
+    """Alle Felder optional — was nicht geschickt wird, bleibt unverändert."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    body: str | None = Field(default=None, max_length=10_000)
+    archived: bool | None = None
+
+
 class NoteRead(NoteCreate):
     model_config = ConfigDict(from_attributes=True)
 
