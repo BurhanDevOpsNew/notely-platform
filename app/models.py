@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import DateTime, String, Text, Uuid
+from sqlalchemy import Boolean, DateTime, String, Text, Uuid, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -18,6 +18,12 @@ class Note(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
     )
+    archived: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+        default=False,
+    )
 
 
 class NoteCreate(BaseModel):
@@ -30,3 +36,4 @@ class NoteRead(NoteCreate):
 
     id: uuid.UUID
     created_at: datetime
+    archived: bool
