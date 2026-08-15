@@ -153,6 +153,20 @@ Nächster Schritt: **Alembic** (siehe unten).
 - `README.md` füllen (aktuell 17 Bytes): Werkzeuge, lokaler Start, Architektur.
 - GitOps: CI trägt den `sha`-Tag ins prod-Overlay ein.
 
+## Sprache im Repo
+- **Kommentare und Docstrings: Deutsch.** Gilt auch für generierte Dateien, sobald wir sie
+  pflegen (`alembic/env.py`, `alembic/script.py.mako` — die Vorlage übersetzen, sonst kommt
+  jede neue Migration wieder englisch heraus).
+- **Fremde Referenztexte bleiben englisch**, z. B. die ~100 Kommentarzeilen in `alembic.ini`.
+  Übersetzt weichen sie von der offiziellen Doku ab, die man beim Debuggen daneben legt.
+- **Fehler- und Logmeldungen: Englisch** (`raise RuntimeError("DATABASE_URL must be set …")`).
+  Sie landen in Logs und werden gegoogelt; englische Meldungen findet man, deutsche nicht.
+  Unterscheidung: *Kommentare für den Leser des Codes, Meldungen für den Betreiber im
+  Störungsfall.*
+- **Commit-Nachrichten, Branch-Namen: Englisch**, Imperativ („persist", nicht „persisted").
+- Vorlagen-Füllmaterial nicht übersetzen, sondern **löschen**. Ein Kommentar, der nur
+  wiederholt, was der Code sagt, ist Wartungslast — er veraltet und lügt dann.
+
 ## Konventionen, die sich bewährt haben
 - Vor jedem Löschen (Branch, Datei, Cluster): **„Wo ist die Kopie, und habe ich sie mit
   eigenen Augen gesehen?"**
