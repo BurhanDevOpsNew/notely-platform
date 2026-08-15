@@ -1,5 +1,4 @@
 import os
-from contextlib import asynccontextmanager
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -7,19 +6,12 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.db import Base, engine, get_session
+from app.db import get_session
 from app.models import Note, NoteCreate, NoteRead
 
 APP_VERSION = os.getenv("APP_VERSION", "dev")
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)
-    yield
-
-
-app = FastAPI(title="Notely", version=APP_VERSION, lifespan=lifespan)
+app = FastAPI(title="Notely", version=APP_VERSION)
 
 
 @app.get("/healthz")
