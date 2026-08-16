@@ -84,7 +84,7 @@ k8s/overlays/   local/kustomization.yaml, prod/kustomization.yaml
 Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
 ```
 
-## Was schon fertig ist (in `main`, PR #17 = `abb0ec7`)
+## Was schon fertig ist (in `main`, PR #18 = `9b3b303`)
 1. **API + Tests** — `/healthz`, `/readyz`, CRUD `/notes`, `APP_VERSION` aus Env. 7 pytest-Tests, ruff sauber.
 2. **Container** — Multi-Stage Dockerfile, `python:3.12-slim`, non-root uid 10001,
    `ARG/ENV APP_VERSION` ganz unten (Layer-Cache), exec-form CMD, `--host 0.0.0.0`.
@@ -291,8 +291,8 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     App weiß nichts davon. Deshalb `--host 0.0.0.0` und nirgends ein Zertifikat.
 
 ## Wo wir gerade stehen
-`main` = `abb0ec7` (Merge PR #17), Arbeitsverzeichnis sauber, Etappe 9 fertig.
-Nächster Schritt: **JSON-Logging + Prometheus `/metrics`** (siehe „Danach geplant").
+`main` = `9b3b303` (Merge PR #18), Arbeitsverzeichnis sauber, Etappe 10 fertig.
+Nächster Schritt: **Prometheus im Cluster** (siehe „Danach geplant").
 
 ## 🔴 Offene Punkte
 1. **Job und Deployment werden gleichzeitig angewendet.** `kubectl apply -k` kennt keine
