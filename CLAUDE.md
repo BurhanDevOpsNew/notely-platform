@@ -400,9 +400,20 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     unterdrücken. Die Regel ist plausibel, aber unbewiesen — das gehört so notiert und
     nicht als erledigt verbucht.
 
+14. **README** (Etappe 14, PR #22) — 17 Bytes → 6,1 kB. Vier Teile: was drin ist, lokaler
+    Start, Aufbau, **Entscheidungen mit Begründung**. Dazu „Bekannte Grenzen", das die
+    fünf offenen Schwächen offen nennt (Klartext-Passwort, prod-Overlay, Job-Reihenfolge,
+    `emptyDir`, Receiver ohne Integration).
+
+    **Der Befund beim Schreiben:** Die Startanleitung war unvollständig, und zwar genau an
+    den Stellen, die auf diesem Rechner längst erledigt waren — `ingress-nginx` wird separat
+    installiert und ist nicht Teil der Manifeste, `KIND_EXPERIMENTAL_PROVIDER=podman` stand
+    nur in `~/.zshrc`. **Eine Anleitung, die nur auf dem Rechner des Autors funktioniert,
+    ist keine Anleitung.** Solche Lücken findet man nur beim Aufschreiben.
+
 ## Wo wir gerade stehen
-`main` = `417eba5` (Merge PR #21), Arbeitsverzeichnis sauber, Etappe 13 fertig.
-Nächster Schritt: offen — siehe „Danach geplant".
+`main` = `a3be681` (Merge PR #22), Arbeitsverzeichnis sauber, Etappe 14 fertig.
+Nächster Schritt: **Secret-Verwaltung** (SOPS mit age empfohlen).
 
 ## 🔴 Offene Punkte
 1. **Job und Deployment werden gleichzeitig angewendet.** `kubectl apply -k` kennt keine
@@ -428,7 +439,6 @@ Nächster Schritt: offen — siehe „Danach geplant".
 - Echte Secret-Verwaltung: SOPS / Sealed Secrets / External Secrets Operator.
   (Aktuell steht das Postgres-Passwort im Klartext im Git — bewusst, nur für die lokale
   Wegwerf-DB, und Burhan weiß, dass das sonst nicht geht.)
-- `README.md` füllen (aktuell 17 Bytes): Werkzeuge, lokaler Start, Architektur.
 - GitOps: CI trägt den `sha`-Tag ins prod-Overlay ein.
 
 ## Sprache im Repo
