@@ -71,3 +71,11 @@ def test_patch_unknown_note_returns_404(client):
         "/notes/00000000-0000-0000-0000-000000000000", json={"archived": True}
     )
     assert r.status_code == 404
+
+def test_metrics_endpoint(client):
+    client.get("/healthz")
+
+    r = client.get("/metrics")
+    assert r.status_code == 200
+    assert "http_requests_total" in r.text
+    assert 'path="/healthz"' in r.text
