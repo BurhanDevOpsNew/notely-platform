@@ -80,7 +80,8 @@ alembic.ini     Konfig; `sqlalchemy.url` ist bewusst auskommentiert
 k8s/base/       deployment.yaml, service.yaml, ingress.yaml, job.yaml, kustomization.yaml
 k8s/postgres/   pvc.yaml, deployment.yaml, service.yaml, kustomization.yaml
 k8s/monitoring/ rbac.yaml, prometheus.yml (Scrape-Config), alerts.yml (Regeln),
-                deployment.yaml, service.yaml, kustomization.yaml
+                alertmanager.yml (Routing), deployment.yaml, service.yaml,
+                alertmanager-deployment.yaml (Deployment + Service), kustomization.yaml
 k8s/overlays/   local/kustomization.yaml, prod/kustomization.yaml
 .github/workflows/ci.yml
 Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
@@ -359,6 +360,46 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     die Fehlerraten-Division `0/0` = NaN, und NaN ist nie `> 0.05` — nachts bei Stille
     feuert also korrekt nichts.
 
+13. **Alertmanager** (Etappe 13, Branch `feature/alertmanager`) — `alertmanager.yml` als
+    eigene ConfigMap, `alertmanager-deployment.yaml` (Deployment + Service in einer Datei,
+    getrennt durch `---`), und in `prometheus.yml` ein `alerting:`-Block mit
+    `static_configs: targets: [alertmanager:9093]`. Hier reicht eine feste Adresse —
+    es gibt genau einen Alertmanager unter einem festen Service-Namen.
+
+    **Warum es Alertmanager überhaupt gibt** — Prometheus erkennt, stellt aber nicht zu:
+    gruppieren (20 tote Pods = *eine* Nachricht), deduplizieren, stummschalten (Wartung),
+    routen (`critical` ans Telefon, `warning` in den Chat).
+
+    **Die vier Zeitangaben in `route:`:**
+    | Feld | Bedeutung |
+    |---|---|
+    | `group_wait: 30s` | nach dem ersten Alarm warten, ob weitere derselben Gruppe kommen |
+    | `group_interval: 5m` | Mindestabstand für Nachmeldungen in eine bestehende Gruppe |
+    | `repeat_interval: 4h` | dauerhaft feuernder Alarm wird wiederholt, sonst vergisst man ihn |
+    | `group_by` | wonach gruppiert wird (`alertname`, `namespace`) |
+
+    **`receivers: - name: default` ohne Integration ist Absicht.** Alarme sind in der
+    Alertmanager-Oberfläche sichtbar, gehen aber nirgends hin. `email_configs` /
+    `slack_configs` bräuchten Zugangsdaten, die auf einem Firmenrechner nicht ins Git
+    gehören — gehört zusammen mit echter Secret-Verwaltung erledigt.
+
+    **`inhibit_rules`** ist das Alleinstellungsmerkmal: feuert ein `critical`, werden
+    `warning`-Alarme im selben Namespace unterdrückt. **Ursache melden, Symptome
+    unterdrücken.** Zugriff über `kubectl port-forward svc/alertmanager 9093:9093`.
+
+    **Bewiesen (ganze Kette):** `kubectl scale deployment/postgres --replicas=0`, ~6 min
+    gewartet → `NotelyHighErrorRate` von `pending` auf **`firing`** → im Alertmanager
+    `1 Alarm: NotelyHighErrorRate | warning | active`. Prometheus meldet den Alertmanager
+    unter `/api/v1/alertmanagers` als aktiv.
+
+    **`NotelyTargetDown` blieb dabei `inactive`** — und das ist die Lektion: die App-Pods
+    liefen weiter und lieferten Metriken, `up` blieb 1. Rot war nur die *Readiness*.
+    Wieder die Trennung aus Etappe 5: der Pod war nicht kaputt, die Datenbank war weg.
+
+    **Nicht geprüft: `inhibit_rules`.** Ohne feuerndes `critical` gab es nichts zu
+    unterdrücken. Die Regel ist plausibel, aber unbewiesen — das gehört so notiert und
+    nicht als erledigt verbucht.
+
 ## Wo wir gerade stehen
 `main` = `1e720f0` (Merge PR #20), Arbeitsverzeichnis sauber, Etappe 12 fertig.
 Nächster Schritt: **Alertmanager** (siehe „Danach geplant").
@@ -382,8 +423,8 @@ Nächster Schritt: **Alertmanager** (siehe „Danach geplant").
    `pip uninstall -y pip setuptools` im Builder holen ~25 MB.
 
 ## Danach geplant
-- **Alertmanager** — die Regeln feuern, aber die Alarme bleiben in Prometheus stehen.
-  Alertmanager gruppiert, dedupliziert, schaltet stumm und stellt zu.
+- **`inhibit_rules` wirklich prüfen** — dazu muss ein `critical` feuern, also
+  `NotelyTargetDown`. Ginge mit `kubectl scale deployment/notely --replicas=0`.
 - Echte Secret-Verwaltung: SOPS / Sealed Secrets / External Secrets Operator.
   (Aktuell steht das Postgres-Passwort im Klartext im Git — bewusst, nur für die lokale
   Wegwerf-DB, und Burhan weiß, dass das sonst nicht geht.)
