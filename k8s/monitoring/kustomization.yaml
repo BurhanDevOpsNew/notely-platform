@@ -5,9 +5,13 @@ resources:
   - rbac.yaml
   - deployment.yaml
   - service.yaml
+  - alertmanager-deployment.yaml
 
 configMapGenerator:
   - name: prometheus-config
     files:
       - prometheus.yml
       - alerts.yml
+  - name: alertmanager-config
+    files:
+      - alertmanager.yml
