@@ -79,8 +79,8 @@ alembic/        env.py (DB-URL aus Env, target_metadata), script.py.mako (Vorlag
 alembic.ini     Konfig; `sqlalchemy.url` ist bewusst auskommentiert
 k8s/base/       deployment.yaml, service.yaml, ingress.yaml, job.yaml, kustomization.yaml
 k8s/postgres/   pvc.yaml, deployment.yaml, service.yaml, kustomization.yaml
-k8s/monitoring/ rbac.yaml, prometheus.yml (Scrape-Config), deployment.yaml, service.yaml,
-                kustomization.yaml
+k8s/monitoring/ rbac.yaml, prometheus.yml (Scrape-Config), alerts.yml (Regeln),
+                deployment.yaml, service.yaml, kustomization.yaml
 k8s/overlays/   local/kustomization.yaml, prod/kustomization.yaml
 .github/workflows/ci.yml
 Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
@@ -331,6 +331,34 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     gewollt, produktiv ein PVC wie bei Postgres.
     Zugriff über `kubectl port-forward svc/prometheus 9090:9090`, kein Ingress.
 
+12. **Alarmregeln** (Etappe 12, Branch `feature/alerts`) — `k8s/monitoring/alerts.yml` mit
+    drei Regeln, eingebunden über `rule_files: /etc/prometheus/alerts.yml` und als zweite
+    Datei im `configMapGenerator`.
+
+    **`for:` ist die wichtigste Zeile.** Ohne sie alarmiert jeder Ausschlag — ein Rollout,
+    ein langsamer Request, ein Netzwerk-Zucken. Nach der dritten Fehlalarm-Nacht schaltet
+    das Team die Alarme ab, und dann ist man schlechter dran als ohne. Zustände:
+    **inactive → pending → firing**; `pending` heißt „Bedingung erfüllt, Uhr läuft".
+
+    **Bewiesen:** `kubectl scale deployment/postgres --replicas=0` → `/readyz` antwortet 503
+    → Fehlerrate **23,4 %** → `NotelyHighErrorRate` wechselte auf `pending`. Nach dem
+    Hochskalieren erholte sich alles, **ohne dass der Alarm je `firing` erreichte** — genau
+    das, wofür `for: 5m` da ist.
+
+    **Zeitfenster verzögern beides.** `rate(...[5m])` schaut 5 Minuten zurück, also bleibt
+    der Alarm noch minutenlang `pending`, nachdem die Störung behoben ist. Erkennen *und*
+    Entwarnen hinken hinterher.
+
+    **Die gefährliche Fehlerart dieser Etappe:** `alerts.yml` fehlte im `configMapGenerator`,
+    `rule_files` zeigte also auf eine nicht existierende Datei. **Prometheus startete
+    trotzdem** — nur eine Warnung im Log, kein Absturz, keine Regeln. Ein Überwachungssystem,
+    das schweigt, sieht aus wie eines, bei dem alles in Ordnung ist. Deshalb nach dem
+    Einrichten immer `/api/v1/rules` abfragen und die Regeln zählen.
+
+    Details: `=~` ist Regex (`status=~"5.."` trifft 500/502/503). Bei null Anfragen ergibt
+    die Fehlerraten-Division `0/0` = NaN, und NaN ist nie `> 0.05` — nachts bei Stille
+    feuert also korrekt nichts.
+
 ## Wo wir gerade stehen
 `main` = `7994cd8` (Merge PR #19), Arbeitsverzeichnis sauber, Etappe 11 fertig.
 Nächster Schritt: **Alarmregeln + Alertmanager** (siehe „Danach geplant").
@@ -354,8 +382,8 @@ Nächster Schritt: **Alarmregeln + Alertmanager** (siehe „Danach geplant").
    `pip uninstall -y pip setuptools` im Builder holen ~25 MB.
 
 ## Danach geplant
-- **Alarmregeln + Alertmanager** — Prometheus sammelt, aber niemand wird geweckt.
-  Erste Regeln: Fehlerrate über 5 %, p95 über einer Schwelle, Target down.
+- **Alertmanager** — die Regeln feuern, aber die Alarme bleiben in Prometheus stehen.
+  Alertmanager gruppiert, dedupliziert, schaltet stumm und stellt zu.
 - Echte Secret-Verwaltung: SOPS / Sealed Secrets / External Secrets Operator.
   (Aktuell steht das Postgres-Passwort im Klartext im Git — bewusst, nur für die lokale
   Wegwerf-DB, und Burhan weiß, dass das sonst nicht geht.)
