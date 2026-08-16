@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - ../../base
   - ../../postgres
+  - ../../monitoring
 
 configMapGenerator:
   - name: notely-config

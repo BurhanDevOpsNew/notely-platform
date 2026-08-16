@@ -79,6 +79,8 @@ alembic/        env.py (DB-URL aus Env, target_metadata), script.py.mako (Vorlag
 alembic.ini     Konfig; `sqlalchemy.url` ist bewusst auskommentiert
 k8s/base/       deployment.yaml, service.yaml, ingress.yaml, job.yaml, kustomization.yaml
 k8s/postgres/   pvc.yaml, deployment.yaml, service.yaml, kustomization.yaml
+k8s/monitoring/ rbac.yaml, prometheus.yml (Scrape-Config), deployment.yaml, service.yaml,
+                kustomization.yaml
 k8s/overlays/   local/kustomization.yaml, prod/kustomization.yaml
 .github/workflows/ci.yml
 Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
@@ -290,6 +292,45 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     Ingress** (außen HTTPS, dahinter Klartext) — Zertifikate liegen an einer Stelle, die
     App weiß nichts davon. Deshalb `--host 0.0.0.0` und nirgends ein Zertifikat.
 
+11. **Prometheus im Cluster** (Etappe 11, Branch `feature/prometheus`) — `k8s/monitoring/`
+    mit `rbac.yaml`, `prometheus.yml`, `deployment.yaml`, `service.yaml`, `kustomization.yaml`.
+    Bewusst **ohne Helm/Operator**: `kube-prometheus-stack` würde die Scrape-Konfiguration
+    und das Relabeling verstecken — genau das, was hier gelernt werden soll.
+
+    **Service Discovery statt fester Zielliste:** `kubernetes_sd_configs: role: pod` fragt
+    die API nach *allen* Pods. `relabel_configs` filtert **vor** dem Scrapen:
+    `action: keep` auf `__meta_kubernetes_pod_annotation_prometheus_io_scrape` behält nur
+    Pods mit `prometheus.io/scrape: "true"`; ein `replace` auf `__address__` setzt den Port
+    aus `prometheus.io/port`. Labels mit `__` sind intern und verschwinden danach; Punkte
+    und Schrägstriche in Annotationen werden zu Unterstrichen.
+    Ergebnis: **2 Targets** (nur die notely-Pods), Postgres und Prometheus selbst nicht.
+
+    **RBAC:** ServiceAccount (Identität) + ClusterRole (`pods: get,list,watch` — nur lesen)
+    + ClusterRoleBinding. `serviceAccountName` im Pod-Template ist die Zeile, ohne die die
+    ganze Berechtigung wirkungslos bleibt.
+
+    **Annotationen brauchen Anführungszeichen** (`"true"`, `"8000"`): Annotation-Werte sind
+    Strings, sonst lehnt die API das Manifest ab. Unterschied zu Labels: Labels dienen der
+    **Auswahl** (Selektoren), Annotationen tragen **Information für Werkzeuge**.
+
+    **`configMapGenerator` mit `files:`** statt `literals:` — die Konfiguration bleibt eine
+    echte YAML-Datei. Der Dateiname wird zum ConfigMap-Schlüssel und damit zum Dateinamen
+    im Container: Datei, Schlüssel und `--config.file` müssen denselben Namen tragen
+    (`prometheus.yaml` statt `.yml` kostete hier einen Durchlauf).
+
+    **Prometheus *zieht*, es bekommt nichts geschickt.** Bei `scrape_interval: 15s` sind
+    Zahlen bis zu 15 s alt — eine Abfrage 2 s nach dem Request liefert korrekt *nichts*.
+    Deshalb misst man Alarme in Minuten, nicht in Sekunden.
+
+    **Damit ist das Pro-Pod-Problem aus Etappe 10 gelöst** — nicht im Code, sondern beim
+    Auswerten: `sum(http_requests_total{path="/notes"})` über beide Replicas.
+    p95: `histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))`
+    — `le` = *less or equal*, die Histogramm-Klassen; die müssen bei `sum by` erhalten bleiben.
+
+    **`emptyDir` statt PVC:** Messdaten sind beim Pod-Neustart weg. Für ein Lernprojekt
+    gewollt, produktiv ein PVC wie bei Postgres.
+    Zugriff über `kubectl port-forward svc/prometheus 9090:9090`, kein Ingress.
+
 ## Wo wir gerade stehen
 `main` = `9b3b303` (Merge PR #18), Arbeitsverzeichnis sauber, Etappe 10 fertig.
 Nächster Schritt: **Prometheus im Cluster** (siehe „Danach geplant").
@@ -313,9 +354,8 @@ Nächster Schritt: **Prometheus im Cluster** (siehe „Danach geplant").
    `pip uninstall -y pip setuptools` im Builder holen ~25 MB.
 
 ## Danach geplant
-- **Prometheus im Cluster** — `/metrics` liefert Zahlen, aber niemand sammelt sie ein.
-  Nächster Schritt wäre ein Prometheus-Deployment plus `ServiceMonitor`/Scrape-Config,
-  danach Alarme (Fehlerrate, p95).
+- **Alarmregeln + Alertmanager** — Prometheus sammelt, aber niemand wird geweckt.
+  Erste Regeln: Fehlerrate über 5 %, p95 über einer Schwelle, Target down.
 - Echte Secret-Verwaltung: SOPS / Sealed Secrets / External Secrets Operator.
   (Aktuell steht das Postgres-Passwort im Klartext im Git — bewusst, nur für die lokale
   Wegwerf-DB, und Burhan weiß, dass das sonst nicht geht.)
