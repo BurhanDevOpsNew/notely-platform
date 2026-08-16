@@ -87,7 +87,7 @@ k8s/overlays/   local/kustomization.yaml, prod/kustomization.yaml
 Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
 ```
 
-## Was schon fertig ist (in `main`, PR #20 = `1e720f0`)
+## Was schon fertig ist (in `main`, PR #21 = `417eba5`)
 1. **API + Tests** — `/healthz`, `/readyz`, CRUD `/notes`, `APP_VERSION` aus Env. 7 pytest-Tests, ruff sauber.
 2. **Container** — Multi-Stage Dockerfile, `python:3.12-slim`, non-root uid 10001,
    `ARG/ENV APP_VERSION` ganz unten (Layer-Cache), exec-form CMD, `--host 0.0.0.0`.
@@ -401,8 +401,8 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     nicht als erledigt verbucht.
 
 ## Wo wir gerade stehen
-`main` = `1e720f0` (Merge PR #20), Arbeitsverzeichnis sauber, Etappe 12 fertig.
-Nächster Schritt: **Alertmanager** (siehe „Danach geplant").
+`main` = `417eba5` (Merge PR #21), Arbeitsverzeichnis sauber, Etappe 13 fertig.
+Nächster Schritt: offen — siehe „Danach geplant".
 
 ## 🔴 Offene Punkte
 1. **Job und Deployment werden gleichzeitig angewendet.** `kubectl apply -k` kennt keine
