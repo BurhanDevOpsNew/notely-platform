@@ -86,7 +86,7 @@ k8s/overlays/   local/kustomization.yaml, prod/kustomization.yaml
 Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
 ```
 
-## Was schon fertig ist (in `main`, PR #18 = `9b3b303`)
+## Was schon fertig ist (in `main`, PR #19 = `7994cd8`)
 1. **API + Tests** — `/healthz`, `/readyz`, CRUD `/notes`, `APP_VERSION` aus Env. 7 pytest-Tests, ruff sauber.
 2. **Container** — Multi-Stage Dockerfile, `python:3.12-slim`, non-root uid 10001,
    `ARG/ENV APP_VERSION` ganz unten (Layer-Cache), exec-form CMD, `--host 0.0.0.0`.
@@ -332,8 +332,8 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     Zugriff über `kubectl port-forward svc/prometheus 9090:9090`, kein Ingress.
 
 ## Wo wir gerade stehen
-`main` = `9b3b303` (Merge PR #18), Arbeitsverzeichnis sauber, Etappe 10 fertig.
-Nächster Schritt: **Prometheus im Cluster** (siehe „Danach geplant").
+`main` = `7994cd8` (Merge PR #19), Arbeitsverzeichnis sauber, Etappe 11 fertig.
+Nächster Schritt: **Alarmregeln + Alertmanager** (siehe „Danach geplant").
 
 ## 🔴 Offene Punkte
 1. **Job und Deployment werden gleichzeitig angewendet.** `kubectl apply -k` kennt keine
