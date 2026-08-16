@@ -57,6 +57,12 @@ Code → Container → CI/CD → Kubernetes → Observability.
   Ändert ein `configMapGenerator`/`secretGenerator` seinen Hash, ändert sich das
   Pod-Template und Kubernetes rollt von selbst. Merksatz: **Kubernetes reagiert auf
   geänderte Spezifikation, nicht auf geänderten Inhalt.**
+- **Podman läuft auf macOS in einer VM.** Ein Container sieht das Dateisystem der VM,
+  nicht das des Macs — geteilt wird standardmäßig nur `$HOME`. `podman save -o /tmp/x.tar`
+  schreibt auf den **Mac**, `-v /tmp:/scan` hängt das leere `/tmp` der **VM** ein → Datei
+  nicht gefunden. Dateien für Container also unter `$HOME` ablegen. Zweitens: niemals über
+  `/tmp` im Container mounten — Programme brauchen das selbst (Trivy scheiterte an
+  `mkdir /tmp/trivy-…: permission denied`). Einhängepunkte in ein eigenes Verzeichnis.
 - Lokale Entwicklungs-DB: Podman-Container `notely-db` auf `localhost:5432`
   (DB/User `notely`, Passwort `notely`), zusätzlich Datenbank `notely_test` für pytest.
 - `.venv` wird **nur** für `pytest` und `ruff` gebraucht — nicht für podman/kubectl/kind/git.
@@ -224,6 +230,38 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
 
    Tests: 7 → **11**.
 
+9. **Trivy + SBOM in der CI** (Etappe 9, Branch `feature/trivy-sbom`) — im Job `image`,
+   **vor** `Build and push`: ein Build mit `load: true` unter dem Arbeitsnamen `notely:scan`
+   (ohne `load` gäbe es kein Image, das Trivy anfassen könnte), dann drei Trivy-Läufe.
+
+   **Zwei Läufe, zwei Aufgaben:**
+   | Lauf | Optionen | Zweck |
+   |---|---|---|
+   | Bericht | `exit-code: 0` | zeigt **alle** Funde, macht nie rot |
+   | Tor | `severity: HIGH,CRITICAL`, `ignore-unfixed: true`, `exit-code: 1` | macht rot |
+
+   `ignore-unfixed` ist die eigentliche Entscheidung: Lücken **ohne verfügbaren Fix** werden
+   ausgeblendet. **Ein Build soll nur an dem scheitern, was du auch ändern kannst** — sonst
+   ist er nach dem dritten Mal rot aus fremder Schuld, und rote Builds werden ignoriert.
+   Das Tor steht **vor** dem Push: ein Image mit behebbarer HIGH-Lücke erreicht die
+   Registry gar nicht erst. Ein Scan danach wäre nur Statistik.
+
+   SBOM als CycloneDX, per `upload-artifact` an den Lauf gehängt. Zweimal bauen kostet
+   nichts: der Scan-Build schreibt in den gha-Cache (`cache-to`), der Push-Build liest nur.
+
+   **Der erste echte Fund — und warum er lehrreich war:** 3× HIGH in `starlette` 0.38.6
+   (CVE-2024-47874, CVE-2026-48818, CVE-2026-54283), alle mit Fix. `starlette` steht **nicht
+   in `requirements.txt`** — es ist eine **transitive Abhängigkeit** von FastAPI, und
+   `fastapi==0.115.0` verlangt `starlette<0.39.0`. Einzeln hochsetzen geht also nicht;
+   der Weg führt über FastAPI. Fix: `fastapi==0.141.1` → zieht `starlette 1.6.0`.
+   Als Folge des Sprungs: `httpx` → `httpx2==2.10.0` in `requirements-dev.txt`
+   (starlettes `TestClient` warnt sonst). Die 11 Tests waren die Absicherung für einen
+   Sprung über 26 FastAPI-Versionen — **deshalb kann man so ein Update überhaupt wagen.**
+
+   **Werkzeug zum Merken:** `pip install --dry-run --report - PAKET` zeigt die Auflösung
+   als JSON, ohne etwas zu installieren. Bei Versionssprüngen der Unterschied zwischen
+   „ausprobieren und hoffen" und „wissen".
+
 ## Wo wir gerade stehen
 `main` = `0c8a344` (Merge PR #15), Arbeitsverzeichnis sauber, Etappe 8 fertig.
 Nächster Schritt: **Trivy + SBOM in der CI** (siehe „Danach geplant").
@@ -247,9 +285,9 @@ Nächster Schritt: **Trivy + SBOM in der CI** (siehe „Danach geplant").
    `pip uninstall -y pip setuptools` im Builder holen ~25 MB.
 
 ## Danach geplant
-- **Trivy-Image-Scan + SBOM in der CI** — der naheliegendste nächste Schritt: bisher prüft
-  die CI nur den Code, nicht das Artefakt, das tatsächlich deployt wird.
-- Strukturiertes JSON-Logging, Prometheus `/metrics`.
+- **Strukturiertes JSON-Logging und Prometheus `/metrics`** — bisher gibt es keinerlei
+  Beobachtbarkeit: kein Log-Format, keine Kennzahlen, keine Möglichkeit zu sehen, wie oft
+  ein Endpunkt aufgerufen wird oder wie lange er braucht.
 - Echte Secret-Verwaltung: SOPS / Sealed Secrets / External Secrets Operator.
   (Aktuell steht das Postgres-Passwort im Klartext im Git — bewusst, nur für die lokale
   Wegwerf-DB, und Burhan weiß, dass das sonst nicht geht.)
