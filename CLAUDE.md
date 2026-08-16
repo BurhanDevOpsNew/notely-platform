@@ -84,7 +84,7 @@ k8s/overlays/   local/kustomization.yaml, prod/kustomization.yaml
 Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
 ```
 
-## Was schon fertig ist (in `main`, PR #15 = `0c8a344`)
+## Was schon fertig ist (in `main`, PR #17 = `abb0ec7`)
 1. **API + Tests** — `/healthz`, `/readyz`, CRUD `/notes`, `APP_VERSION` aus Env. 7 pytest-Tests, ruff sauber.
 2. **Container** — Multi-Stage Dockerfile, `python:3.12-slim`, non-root uid 10001,
    `ARG/ENV APP_VERSION` ganz unten (Layer-Cache), exec-form CMD, `--host 0.0.0.0`.
@@ -263,8 +263,8 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
    „ausprobieren und hoffen" und „wissen".
 
 ## Wo wir gerade stehen
-`main` = `0c8a344` (Merge PR #15), Arbeitsverzeichnis sauber, Etappe 8 fertig.
-Nächster Schritt: **Trivy + SBOM in der CI** (siehe „Danach geplant").
+`main` = `abb0ec7` (Merge PR #17), Arbeitsverzeichnis sauber, Etappe 9 fertig.
+Nächster Schritt: **JSON-Logging + Prometheus `/metrics`** (siehe „Danach geplant").
 
 ## 🔴 Offene Punkte
 1. **Job und Deployment werden gleichzeitig angewendet.** `kubectl apply -k` kennt keine
@@ -329,6 +329,24 @@ Nächster Schritt: **Trivy + SBOM in der CI** (siehe „Danach geplant").
 - Sekundäre Prompts (`quote>`, `dquote>`, `heredoc>`, `pipe>`) sind kein Fehler, sondern
   „Eingabe unvollständig" → `Ctrl+C`. Wo Anführungszeichen nur Kosmetik sind, weglassen;
   wo sie Bedeutung tragen (JSON in `curl -d`), sind sie Pflicht.
+- **Vorgemerkt ist nicht committet.** In Etappe 9 lief `git add -A`, aber `git commit`
+  nicht — gepusht wurde der alte Stand, PR #16 lieferte **drei Zeilen Doku statt der
+  ganzen Etappe**, und die CI war grün, weil nichts drin war. Erkennungsmerkmal in
+  `git status --short`: Buchstabe **links**, Leerzeichen rechts (`M `). Gegenmittel:
+  nach *jedem* Commit `git show --stat --oneline HEAD` und die Dateizahl gegen die
+  **vorher genannte Erwartung** halten; vor jedem Merge den Reiter „Files changed".
+  **Ein grüner PR beweist nicht, dass Arbeit ausgeliefert wurde — nur, dass das,
+  was drin war, funktioniert.**
+- **Sehr lange Befehle scheitern still.** Der Commit oben war ein 900-Zeichen-Einzeiler
+  mit drei `-m`-Blöcken; er überlebte das Einfügen nicht. Kurze Betreffzeile im Terminal,
+  ausführlicher Text ins PR-Beschreibungsfeld — dort liest ihn der Reviewer ohnehin.
+- **`unable to find version X` heißt „heißt anders", nicht „zu alt".** Die Tags von
+  `aquasecurity/trivy-action` tragen ein `v` (`v0.36.0`). Echte Namen nachschlagen statt
+  an der Zahl drehen — geht ohne Browser und ohne Login:
+  `git ls-remote --tags URL | sed 's|.*refs/tags/||; s|\^{}||' | sort -u | sort -V | tail -5`
+  (`sort -V` = Versionssortierung, sonst landet 0.9 hinter 0.36).
+- **`tail -1` ist die Ziffer eins.** In vielen Schriftarten von `l` nicht zu unterscheiden.
+  Sicherer: `tail -n 1` — `-n` nimmt eine Zahl, da kann kein Buchstabe hin.
 - **`git add -A`, nicht `git commit -am`.** `-a` merkt nur *verfolgte* Dateien vor; eine
   neue Datei mit `??` fehlt still im Commit — lokal läuft alles, die CI stirbt an
   `ModuleNotFoundError`. Danach zählen: `git diff --cached --stat | tail -1`.
