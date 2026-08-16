@@ -262,6 +262,34 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
    als JSON, ohne etwas zu installieren. Bei Versionssprüngen der Unterschied zwischen
    „ausprobieren und hoffen" und „wissen".
 
+10. **JSON-Logging + Prometheus `/metrics`** (Etappe 10, Branch `feature/observability`) —
+    `app/observability.py`: `JsonFormatter` (jede Logzeile ein JSON-Objekt, Zeitstempel
+    ISO 8601 mit Zeitzone), `configure_logging()` (Root-Handler ersetzt, `uvicorn.access`
+    abgeschaltet — sonst zwei Formate nebeneinander), Middleware `observe_requests`,
+    `/metrics` über `prometheus-client`.
+
+    **Die Entscheidung, um die es geht — Label-Kardinalität:** als `path`-Label wird die
+    **Route-Vorlage** benutzt (`/notes/{note_id}`), nicht der echte Pfad. Sonst bekäme
+    **jede UUID eine eigene Zeitreihe** → bei 10.000 Notizen 10.000 Serien für einen
+    Endpunkt. **Label-Werte müssen eine kleine, feste Menge sein.**
+    `request.scope["route"]` existiert erst *nach* `await call_next(...)` (Routing passiert
+    dort); bei 404 gibt es keine Route → `"unmatched"`.
+
+    **Was ins Log darf:** Methode, Route-Vorlage, Status, Dauer. **Keine Notiz-Titel, keine
+    Inhalte, keine Query-Strings** — Logs werden weitergereicht, archiviert und von mehr
+    Leuten gelesen als die Datenbank.
+
+    **Zähler leben im Prozess, also pro Pod.** Zwei Replicas + Round-Robin ⇒ `/metrics`
+    liefert bei jedem Aufruf andere Zahlen. Kein Fehler: Prometheus fragt in Produktion
+    jeden Pod einzeln ab und summiert selbst. Dasselbe Muster wie der Zustand in Etappe 5.
+
+    **Nebenbei bestätigt:** `/readyz` 10×, `/healthz` 5× — genau das Verhältnis der
+    Probe-Intervalle (5 s / 10 s) aus `deployment.yaml`.
+
+    **TLS:** die App spricht bewusst HTTP. Standardmuster ist **TLS-Terminierung am
+    Ingress** (außen HTTPS, dahinter Klartext) — Zertifikate liegen an einer Stelle, die
+    App weiß nichts davon. Deshalb `--host 0.0.0.0` und nirgends ein Zertifikat.
+
 ## Wo wir gerade stehen
 `main` = `abb0ec7` (Merge PR #17), Arbeitsverzeichnis sauber, Etappe 9 fertig.
 Nächster Schritt: **JSON-Logging + Prometheus `/metrics`** (siehe „Danach geplant").
@@ -285,9 +313,9 @@ Nächster Schritt: **JSON-Logging + Prometheus `/metrics`** (siehe „Danach gep
    `pip uninstall -y pip setuptools` im Builder holen ~25 MB.
 
 ## Danach geplant
-- **Strukturiertes JSON-Logging und Prometheus `/metrics`** — bisher gibt es keinerlei
-  Beobachtbarkeit: kein Log-Format, keine Kennzahlen, keine Möglichkeit zu sehen, wie oft
-  ein Endpunkt aufgerufen wird oder wie lange er braucht.
+- **Prometheus im Cluster** — `/metrics` liefert Zahlen, aber niemand sammelt sie ein.
+  Nächster Schritt wäre ein Prometheus-Deployment plus `ServiceMonitor`/Scrape-Config,
+  danach Alarme (Fehlerrate, p95).
 - Echte Secret-Verwaltung: SOPS / Sealed Secrets / External Secrets Operator.
   (Aktuell steht das Postgres-Passwort im Klartext im Git — bewusst, nur für die lokale
   Wegwerf-DB, und Burhan weiß, dass das sonst nicht geht.)

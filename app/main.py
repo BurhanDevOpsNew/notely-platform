@@ -1,17 +1,21 @@
 import os
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Response, status
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.db import get_session
 from app.models import Note, NoteCreate, NoteRead, NoteUpdate
+from app.observability import configure_logging, metrics_response, observe_requests
 
 APP_VERSION = os.getenv("APP_VERSION", "dev")
 
+configure_logging()
+
 app = FastAPI(title="Notely", version=APP_VERSION)
+app.middleware("http")(observe_requests)
 
 
 @app.get("/healthz")
@@ -29,6 +33,11 @@ def readyz(session: Session = Depends(get_session)) -> dict[str, str]:
             detail="database unavailable",
         )
     return {"status": "ready"}
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    return metrics_response()
 
 
 @app.get("/notes", response_model=list[NoteRead])
