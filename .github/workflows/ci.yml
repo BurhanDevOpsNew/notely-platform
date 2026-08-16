@@ -27,7 +27,7 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-          
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -94,14 +94,14 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Trivy report (informational)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: notely:scan
           format: table
           exit-code: 0
 
       - name: Trivy gate (fails on fixable HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: notely:scan
           severity: HIGH,CRITICAL
@@ -109,7 +109,7 @@ jobs:
           exit-code: 1
 
       - name: Generate SBOM
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: notely:scan
           format: cyclonedx
