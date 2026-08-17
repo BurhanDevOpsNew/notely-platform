@@ -72,7 +72,7 @@ Code → Container → CI/CD → Kubernetes → Observability.
 ## Aufbau
 ```
 app/            main.py (FastAPI), models.py (SQLAlchemy + Pydantic), db.py (Engine/Session)
-tests/          conftest.py, test_api.py (7 Tests, prüfen nur HTTP-Verhalten)
+tests/          conftest.py, test_api.py (12 Tests, prüfen nur HTTP-Verhalten)
 cluster/        kind-cluster.yaml   (kind-CLI-Config, KEINE k8s-Ressource)
 alembic/        env.py (DB-URL aus Env, target_metadata), script.py.mako (Vorlage,
                 deutsch — sonst kommt jede neue Migration englisch heraus), versions/
@@ -82,7 +82,9 @@ k8s/postgres/   pvc.yaml, deployment.yaml, service.yaml, kustomization.yaml
 k8s/monitoring/ rbac.yaml, prometheus.yml (Scrape-Config), alerts.yml (Regeln),
                 alertmanager.yml (Routing), deployment.yaml, service.yaml,
                 alertmanager-deployment.yaml (Deployment + Service), kustomization.yaml
-k8s/overlays/   local/kustomization.yaml, prod/kustomization.yaml
+k8s/overlays/   local/ und prod/: kustomization.yaml + *.enc.env (SOPS-verschlüsselt;
+                die entschlüsselten *.env sind gitignoriert)
+.sops.yaml      creation_rules + öffentlicher age-Schlüssel
 .github/workflows/ci.yml
 Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
 ```
@@ -411,6 +413,50 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     nur in `~/.zshrc`. **Eine Anleitung, die nur auf dem Rechner des Autors funktioniert,
     ist keine Anleitung.** Solche Lücken findet man nur beim Aufschreiben.
 
+15. **SOPS mit age** (Etappe 15, Branch `feature/sops`) — `.sops.yaml` mit
+    `creation_rules: path_regex: \.enc\.env$` und dem **öffentlichen** age-Schlüssel.
+    Verschlüsselte Dateien im Repo: `k8s/overlays/local/{postgres-credentials,notely-db}.enc.env`
+    und `k8s/overlays/prod/notely-db.enc.env`. Die entschlüsselten `*.env` sind gitignoriert.
+    `secretGenerator` liest sie über `envs:` statt `literals:`.
+
+    **SOPS verschlüsselt die Werte, nicht die Datei:** `POSTGRES_PASSWORD=ENC[AES256_GCM,…]`,
+    Schlüsselnamen bleiben lesbar. Ein PR-Diff zeigt, *welches* Geheimnis sich geändert hat,
+    ohne es zu verraten. Gewählt statt Sealed Secrets, weil der Schlüssel eine sichtbare
+    Datei bleibt und nichts im Cluster liegen muss.
+
+    **Der beste Beweis der Umstellung: identische Hashes.** Vorher und nachher
+    `notely-db-c6c5bf6h4b` und `postgres-credentials-m487fkcmk5`. Der Hash wird über den
+    Inhalt gebildet — gleicher Hash heißt, nur die *Aufbewahrung* hat sich geändert, nicht
+    das *Ergebnis*. Die Secrets im Cluster waren danach unverändert alt (2d21h/3d19h).
+
+    **Vier Fehler, die alle etwas lehren:**
+    1. `sops -e datei > ziel.enc.env` → `no matching creation rules found`. SOPS prüft die
+       Regel gegen die **Eingabe**, die `>`-Umleitung sieht es nie. Richtig ist `sops -e -i`
+       auf eine Datei, die schon den Zielnamen trägt.
+    2. Entschlüsseln scheiterte an `SOPS_AGE_KEY_FILE`. **Der Standardpfad ist
+       plattformabhängig** — Linux `~/.config/sops/age/keys.txt`, macOS
+       `~/Library/Application Support/sops/age/keys.txt`. Lösung: Variable explizit setzen.
+    3. `export` in `~/.zshrc` eingetragen, aber die laufende Shell kannte sie nicht.
+       **`~/.zshrc` wirkt erst auf die nächste Shell.**
+    4. `>` **kürzt die Zieldatei, bevor** der Befehl läuft. Die gescheiterten `sops -d`-Läufe
+       hinterließen 0-Byte-Klartextdateien. Danach immer `wc -l` prüfen — ein leeres Secret
+       läuft lautlos durch und endet in `CreateContainerConfigError`.
+
+    **Regeln braucht nur das Schreiben, nicht das Lesen:** beim Entschlüsseln stehen die
+    nötigen Angaben im `sops:`-Metadatenblock der Datei selbst.
+
+    **Passwörter in URLs:** das prod-Passwort entsteht mit
+    `openssl rand -base64 24 | tr -d '/+='`. Die drei gelöschten Zeichen haben in einer URL
+    Bedeutung und müssten sonst prozentkodiert werden — dasselbe Problem wie `%` → `%%` in
+    `alembic/env.py`.
+
+    **Damit ist offener Punkt 2 erledigt:** `k8s/overlays/prod` hat ein eigenes
+    `notely-db`-Secret mit Zufallspasswort und rendert vollständig (`notely-db-hg79tbgg7m`).
+
+    **Was bleibt:** das alte Klartext-Passwort steht **weiterhin in der Git-Historie**. Bei
+    einem echten Geheimnis wäre die einzige richtige Antwort **rotieren** — Historie
+    umschreiben hilft nur scheinbar, weil Klone und Forks die alten Commits behalten.
+
 ## Wo wir gerade stehen
 `main` = `a3be681` (Merge PR #22), Arbeitsverzeichnis sauber, Etappe 14 fertig.
 Nächster Schritt: **Secret-Verwaltung** (SOPS mit age empfohlen).
@@ -424,11 +470,8 @@ Nächster Schritt: **Secret-Verwaltung** (SOPS mit age empfohlen).
    Dazu: **die `spec` eines Jobs ist unveränderlich.** Ein zweites `apply` auf denselben
    Job-Namen bringt `field is immutable` — deshalb gehört
    `kubectl delete job notely-migrate --ignore-not-found` vor jedes `apply`.
-2. **`k8s/overlays/prod` kennt kein `notely-db`-Secret.** `base/deployment.yaml` verlangt es
-   seit PR #12 per `envFrom`. `kubectl kustomize k8s/overlays/prod` läuft trotzdem durch
-   (kustomize prüft keine Existenz), die Pods gingen aber in `CreateContainerConfigError`.
-   Bewusst offen gelassen, statt ein zweites Klartext-Passwort ins Git zu schreiben —
-   gehört zusammen mit echter Secret-Verwaltung erledigt.
+2. **Kustomize kann kein SOPS.** Vor jedem `apply` sind die zwei `sops -d`-Befehle nötig
+   (siehe README). Produktiv nimmt man den KSOPS-Plugin oder einen CI-Schritt.
 3. **Image-Diät**, kein Blocker: die 90,5 MB des venv enthalten `pip`, `setuptools` und
    `.pyc`-Dateien, die zur Laufzeit niemand braucht. `pip install --no-compile` plus
    `pip uninstall -y pip setuptools` im Builder holen ~25 MB.

@@ -8,3 +8,7 @@ __pycache__/
 .venv/
 *.bak
 kubeconfig
+
+# SOPS: entschlüsselte Geheimnisse, nur lokal
+k8s/overlays/*/postgres-credentials.env
+k8s/overlays/*/notely-db.env

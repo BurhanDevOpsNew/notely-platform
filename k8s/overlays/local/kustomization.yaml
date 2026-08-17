@@ -13,13 +13,11 @@ configMapGenerator:
 
 secretGenerator:
   - name: postgres-credentials
-    literals:
-      - POSTGRES_DB=notely
-      - POSTGRES_USER=notely
-      - POSTGRES_PASSWORD=nur-lokal-zum-lernen
+    envs:
+      - postgres-credentials.env
   - name: notely-db
-    literals:
-      - DATABASE_URL=postgresql+psycopg://notely:nur-lokal-zum-lernen@postgres:5432/notely
+    envs:
+      - notely-db.env
 
 images:
   - name: notely

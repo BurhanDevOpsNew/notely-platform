@@ -9,6 +9,11 @@ configMapGenerator:
     literals:
       - APP_VERSION=prod
 
+secretGenerator:
+  - name: notely-db
+    envs:
+      - notely-db.env
+
 images:
   - name: notely
     newName: ghcr.io/burhandevopsnew/notely-platform

@@ -20,7 +20,24 @@ Die Anwendung selbst ist bewusst schlicht. Interessant ist, was darum herum steh
 
 ## Lokal starten
 
-Voraussetzungen: Podman, kind, kubectl, Python 3.12.
+Voraussetzungen: Podman, kind, kubectl, Python 3.12, `sops` und `age`.
+
+Die Geheimnisse liegen mit [SOPS](https://github.com/getsops/sops) verschlüsselt im
+Repository (`*.enc.env`). Zum Entschlüsseln braucht man den privaten age-Schlüssel — ohne
+ihn ist der Rest dieser Anleitung nicht ausführbar. Ein eigener Schlüssel:
+
+```bash
+mkdir -p ~/.config/sops/age
+age-keygen -o ~/.config/sops/age/keys.txt        # gibt den öffentlichen Schlüssel aus
+export SOPS_AGE_KEY_FILE=$HOME/.config/sops/age/keys.txt
+```
+
+`SOPS_AGE_KEY_FILE` ist nötig, weil SOPS den Standardpfad plattformabhängig sucht — auf
+macOS unter `~/Library/Application Support`, nicht unter `~/.config`. Die Zeile gehört in
+die Shell-Konfiguration.
+
+Den öffentlichen Schlüssel trägt man in `.sops.yaml` ein und verschlüsselt die Dateien neu
+(`sops -e -i <datei>.enc.env`). Der private Schlüssel gehört nie ins Repository.
 
 ```bash
 # kind mit Podman statt Docker betreiben
@@ -45,6 +62,15 @@ podman build -t notely:dev .
 podman tag localhost/notely:dev docker.io/library/notely:dev
 podman save docker.io/library/notely:dev -o /tmp/notely.tar
 kind load image-archive /tmp/notely.tar --name notely
+```
+
+Kustomize kann kein SOPS, die Geheimnisse müssen also vorher entschlüsselt werden. Die
+entstehenden Klartextdateien sind gitignoriert:
+
+```bash
+sops -d k8s/overlays/local/postgres-credentials.enc.env > k8s/overlays/local/postgres-credentials.env
+sops -d k8s/overlays/local/notely-db.enc.env > k8s/overlays/local/notely-db.env
+wc -l k8s/overlays/local/*.env      # muss 3 und 1 ergeben, nicht 0
 ```
 
 ```bash
@@ -130,13 +156,23 @@ dann ist man schlechter dran als ohne.
 **TLS wird am Ingress terminiert.** Die Anwendung spricht bewusst HTTP. Zertifikate liegen
 an einer Stelle, die Anwendung weiß nichts davon.
 
+**Geheimnisse liegen verschlüsselt im Repository, nicht daneben.** SOPS verschlüsselt die
+**Werte**, nicht die Datei: `POSTGRES_PASSWORD=ENC[AES256_GCM,...]`. Ein Diff im Pull
+Request zeigt also, *welches* Geheimnis sich geändert hat, ohne es zu verraten. Gewählt
+wurde SOPS mit age statt Sealed Secrets, weil der Schlüssel eine sichtbare Datei auf dem
+Rechner bleibt und nichts im Cluster liegen muss.
+
 ## Bekannte Grenzen
 
-- Das Postgres-Passwort steht im Klartext im Repository. Bewusst so, nur für die lokale
-  Wegwerf-Datenbank. Richtig wäre SOPS, Sealed Secrets oder ein External Secrets Operator —
-  offen.
-- `k8s/overlays/prod` hat kein `notely-db`-Secret und ist deshalb nicht lauffähig. Gehört
-  zusammen mit der Secret-Verwaltung erledigt.
+- **Das alte Klartext-Passwort steht weiterhin in der Git-Historie.** Ab jetzt kommen keine
+  neuen Klartext-Geheimnisse dazu, aber alte Commits enthalten es. Für dieses
+  Wegwerf-Passwort ist das hinnehmbar. Bei einem echten Geheimnis ist die einzige richtige
+  Antwort **rotieren** — Historie umschreiben hilft nur scheinbar, weil Klone und Forks die
+  alten Commits behalten.
+- Kustomize kann kein SOPS, deshalb ist vor jedem `apply` ein manueller `sops -d`-Schritt
+  nötig. Produktiv nimmt man dafür den KSOPS-Plugin oder einen Schritt in der CI.
+- `k8s/overlays/prod` ist strukturell vollständig, wird aber nirgends deployt: der
+  Datenbank-Host ist ein Platzhalter.
 - `kubectl apply` ordnet Migrations-Job und Deployment nicht. Unkritisch, weil `/readyz` nur
   `SELECT 1` prüft. Echte Reihenfolge gäbe es mit Helm-Hooks oder ArgoCD-Sync-Waves.
 - Prometheus schreibt in ein `emptyDir` — Messdaten überleben keinen Pod-Neustart.
