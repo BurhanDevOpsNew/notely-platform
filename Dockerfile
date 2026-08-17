@@ -12,6 +12,12 @@ RUN python -m venv /opt/venv && \
 # ---------- Stage 2: Runtime ----------
 FROM python:3.12-slim
 
+# Sicherheitsupdates des Basis-Images einspielen. Ohne das erbt man die Paketversionen
+# vom Zeitpunkt, an dem python:3.12-slim gebaut wurde — hier util-linux mit CVE-2026-53615.
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/*
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH"
@@ -22,7 +28,7 @@ WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
 COPY app ./app
-COPY alembic.ini . 
+COPY alembic.ini .
 COPY alembic ./alembic
 
 ARG APP_VERSION=dev
