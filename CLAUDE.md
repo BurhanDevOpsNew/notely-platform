@@ -267,6 +267,26 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
    als JSON, ohne etwas zu installieren. Bei Versionssprüngen der Unterschied zwischen
    „ausprobieren und hoffen" und „wissen".
 
+   **Zweiter Fund, diesmal im Basis-Image** (in Etappe 15 aufgetreten): 9× HIGH aus *einer*
+   Lücke — CVE-2026-53615 in `util-linux` und seinen Bibliotheken (`libblkid1`, `libmount1`,
+   `libuuid1`, `login`, `mount`, …), Debian 13.6 aus `python:3.12-slim`. Spalte
+   **`Status: fixed`** ⇒ `ignore-unfixed` greift nicht, das Tor blockiert zu Recht.
+   Fix: in **Stage 2** des Dockerfiles, direkt nach `FROM`:
+   ```dockerfile
+   RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+   ```
+   Nur Stage 2 — der Builder wird verworfen. Das `rm` muss in **dieselbe** `RUN`-Zeile:
+   jede `RUN`-Anweisung ist eine Schicht, und was in einer früheren Schicht liegt, bleibt
+   im Image, auch wenn eine spätere es löscht. Größe danach **253 MB** (vorher 239 MB).
+
+   **Der Kompromiss, den man kennen muss:** `apt-get upgrade` macht den Build nicht mehr
+   reproduzierbar — derselbe Dockerfile ergibt zu verschiedenen Zeitpunkten verschiedene
+   Images. Wer Reproduzierbarkeit braucht, pinnt das Basis-Image auf einen Digest und
+   aktualisiert bewusst. Wäre kein Fix verfügbar, wäre `.trivyignore` mit CVE-Nummer,
+   Begründung und Ablaufdatum das richtige Mittel — nicht das Tor aufweichen.
+
 10. **JSON-Logging + Prometheus `/metrics`** (Etappe 10, Branch `feature/observability`) —
     `app/observability.py`: `JsonFormatter` (jede Logzeile ein JSON-Objekt, Zeitstempel
     ISO 8601 mit Zeitzone), `configure_logging()` (Root-Handler ersetzt, `uvicorn.access`
