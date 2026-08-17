@@ -418,9 +418,8 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     liefen weiter und lieferten Metriken, `up` blieb 1. Rot war nur die *Readiness*.
     Wieder die Trennung aus Etappe 5: der Pod war nicht kaputt, die Datenbank war weg.
 
-    **Nicht geprüft: `inhibit_rules`.** Ohne feuerndes `critical` gab es nichts zu
-    unterdrücken. Die Regel ist plausibel, aber unbewiesen — das gehört so notiert und
-    nicht als erledigt verbucht.
+    **`inhibit_rules` — in Etappe 17 geprüft, und dabei ein echter Fehler gefunden.**
+    Siehe Punkt 17.
 
 14. **README** (Etappe 14, PR #22) — 17 Bytes → 6,1 kB. Vier Teile: was drin ist, lokaler
     Start, Aufbau, **Entscheidungen mit Begründung**. Dazu „Bekannte Grenzen", das die
@@ -503,6 +502,36 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     Bedeutung: Tiefe 6 = der Step, 8 = Schlüssel des Steps (`uses`, `with`), 10 = Parameter
     der Action. Kontrolle war `grep -c 'docker/build-push-action'` → muss **2** sein.
 
+17. **Alarm-Labels reparieren** (Etappe 17, Branch `feature/alert-labels`) — beim Versuch,
+    `inhibit_rules` zu prüfen, kamen zwei Befunde **durch Lesen**, nicht durch Testen.
+
+    **Befund 1: `sum()` ohne `by` wirft *alle* Labels weg.** Gemessen:
+    `sum(rate(http_requests_total[5m]))` → `{}`,
+    `sum by (namespace) (rate(...))` → `{'namespace': 'default'}`.
+    `NotelyHighErrorRate` hatte also **kein** `namespace`, `NotelyTargetDown` schon (aus dem
+    Relabeling). Die `inhibit_rule` mit `equal: [namespace]` verlangt dasselbe Label auf
+    beiden Seiten — bei „vorhanden vs. fehlend" gilt sie als nicht erfüllt.
+    **Die Unterdrückung konnte nie greifen.** Fix: `sum by (namespace)` in beiden Zählern,
+    `sum by (le, namespace)` beim Histogramm (`le` muss bleiben).
+
+    **Befund 2: `== 0` und `absent()` erkennen verschiedene Ausfälle.**
+    `up{...} == 0` braucht eine **existierende** Reihe mit Wert 0 — das passiert nur, wenn
+    ein Target gefunden, aber nicht erreicht wird. Bei `kubectl scale --replicas=0`
+    verschwindet die Reihe ganz, und die Regel feuert **nicht**. Dafür gibt es jetzt
+    `NotelyNoTargets` mit `absent(up{job="kubernetes-pods"})` und einem **statischen**
+    `namespace: default` — `absent()` kann keine Labels aus Daten mitbringen, es gibt keine.
+
+    **Bewiesen, ohne 6 Minuten zu warten:** zwei künstliche Alarme per POST an
+    `alertmanager:9093/api/v2/alerts` (ein `critical`, ein `warning`, gleicher Namespace) →
+    der `warning` stand auf **`state=suppressed`** mit `inhibitedBy=[<fingerprint>]`.
+    Dazu die zwei PromQL-Abfragen oben für den Labelerhalt. **Zwei kleine Messungen an der
+    richtigen Stelle schlagen einen langen Ende-zu-Ende-Versuch.**
+
+    **Und eine Selbstkorrektur, die dazugehört:** `/api/v1/rules` zeigt nur die *statisch
+    konfigurierten* Labels einer Regel, nicht die aus dem Abfrageergebnis. Es war deshalb
+    kein Beweis für den Fix — solche Fehlschlüsse fallen nur auf, wenn man fragt, *was* eine
+    Ausgabe eigentlich zeigt.
+
 ## Wo wir gerade stehen
 `main` = `d2acd8f` (Merge PR #23), Etappe 15 fertig (SOPS + CVE-Fix im Basis-Image).
 Auf Branch `feature/scheduled-scan`: Etappe 16 (geplanter Scan) fertig, noch nicht gemergt.
@@ -523,8 +552,10 @@ Auf Branch `feature/scheduled-scan`: Etappe 16 (geplanter Scan) fertig, noch nic
    `pip uninstall -y pip setuptools` im Builder holen ~25 MB.
 
 ## Danach geplant
-- **`inhibit_rules` wirklich prüfen** — dazu muss ein `critical` feuern, also
-  `NotelyTargetDown`. Ginge mit `kubectl scale deployment/notely --replicas=0`.
+- **GitOps mit ArgoCD** — die größte verbleibende Lücke: deployt wird per Hand vom Laptop.
+  ArgoCD beobachtet das Repo und zieht selbst, macht *drift* sichtbar, und räumt beide
+  offenen Punkte mit ab (Sync-Waves = Reihenfolge für den Job, KSOPS = kein manuelles
+  `sops -d` mehr).
 - Echte Secret-Verwaltung: SOPS / Sealed Secrets / External Secrets Operator.
   (Aktuell steht das Postgres-Passwort im Klartext im Git — bewusst, nur für die lokale
   Wegwerf-DB, und Burhan weiß, dass das sonst nicht geht.)
