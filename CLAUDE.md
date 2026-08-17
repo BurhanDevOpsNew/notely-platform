@@ -89,7 +89,7 @@ k8s/overlays/   local/ und prod/: kustomization.yaml + *.enc.env (SOPS-verschlü
 Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
 ```
 
-## Was schon fertig ist (in `main`, PR #21 = `417eba5`)
+## Was schon fertig ist (in `main`, PR #23 = `d2acd8f`)
 1. **API + Tests** — `/healthz`, `/readyz`, CRUD `/notes`, `APP_VERSION` aus Env. 7 pytest-Tests, ruff sauber.
 2. **Container** — Multi-Stage Dockerfile, `python:3.12-slim`, non-root uid 10001,
    `ARG/ENV APP_VERSION` ganz unten (Layer-Cache), exec-form CMD, `--host 0.0.0.0`.
@@ -477,9 +477,35 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     einem echten Geheimnis wäre die einzige richtige Antwort **rotieren** — Historie
     umschreiben hilft nur scheinbar, weil Klone und Forks die alten Commits behalten.
 
+16. **Geplanter Scan** (Etappe 16, Branch `feature/scheduled-scan`) — `on:` in `ci.yml` um
+    `schedule: - cron: "0 6 * * 1"` und `workflow_dispatch:` erweitert.
+
+    **Warum überhaupt:** Der CVE aus Etappe 15 kam nicht aus dem Code. Er tauchte auf, weil
+    Debian eine Lücke gemeldet hat — ohne dass jemand das Repo angefasst hatte. Ohne
+    geplanten Lauf merkt man das erst beim nächsten Deploy, im schlechtesten Fall
+    Freitagabend beim Hotfix. Montagmorgen ist gewählt, damit Funde am Wochenanfang liegen.
+
+    **cron ist UTC**, nicht Ortszeit: `0 6 * * 1` ist in Deutschland 08:00 (Sommer) bzw.
+    07:00 (Winter). Felder: Minute, Stunde, Tag, Monat, Wochentag (1 = Montag).
+
+    **Die Zeile, die man dabei vergisst:** `push: ${{ github.event_name != 'pull_request' }}`
+    musste zu `== 'push'` werden. Bei einem geplanten Lauf ist `event_name` = `schedule`,
+    die alte Bedingung wäre **wahr** gewesen → jede Woche ein Image-Push, `latest` verschiebt
+    sich ohne Code-Änderung. **Negative Bedingungen wachsen mit jedem neuen Auslöser mit,
+    positive nicht.** Der geplante Lauf soll erkennen, nicht ausliefern.
+
+    **`workflow_dispatch:`** gibt einen „Run workflow"-Knopf. Nötig, weil geplante Läufe nur
+    auf dem Standard-Branch starten — die Änderung ist aus einem Feature-Branch heraus
+    **nicht testbar**, erst nach dem Merge per Knopfdruck.
+
+    **Nebenbefund beim Einbauen:** Die neue `push:`-Zeile landete zuerst auf Step-Ebene und
+    überschrieb dabei `uses: docker/build-push-action@v6`. In YAML ist die Einrückung
+    Bedeutung: Tiefe 6 = der Step, 8 = Schlüssel des Steps (`uses`, `with`), 10 = Parameter
+    der Action. Kontrolle war `grep -c 'docker/build-push-action'` → muss **2** sein.
+
 ## Wo wir gerade stehen
-`main` = `a3be681` (Merge PR #22), Arbeitsverzeichnis sauber, Etappe 14 fertig.
-Nächster Schritt: **Secret-Verwaltung** (SOPS mit age empfohlen).
+`main` = `d2acd8f` (Merge PR #23), Etappe 15 fertig (SOPS + CVE-Fix im Basis-Image).
+Auf Branch `feature/scheduled-scan`: Etappe 16 (geplanter Scan) fertig, noch nicht gemergt.
 
 ## 🔴 Offene Punkte
 1. **Job und Deployment werden gleichzeitig angewendet.** `kubectl apply -k` kennt keine
