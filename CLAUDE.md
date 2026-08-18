@@ -92,7 +92,7 @@ docs/           technologien.md (Lernnotizen: jede Technologie einfach erklärt)
 Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
 ```
 
-## Was schon fertig ist (in `main`, PR #28 = `182ee76`)
+## Was schon fertig ist (in `main`, PR #29 = `4afc89f`)
 1. **API + Tests** — `/healthz`, `/readyz`, CRUD `/notes`, `APP_VERSION` aus Env. 7 pytest-Tests, ruff sauber.
 2. **Container** — Multi-Stage Dockerfile, `python:3.12-slim`, non-root uid 10001,
    `ARG/ENV APP_VERSION` ganz unten (Layer-Cache), exec-form CMD, `--host 0.0.0.0`.
@@ -594,9 +594,42 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     und verwaltet sich **nicht selbst**. Ändert sich `targetRevision` in Git, muss die Datei
     erneut angewendet werden. Dieselbe Form wie „secret zero".
 
+19. **Automatischer Sync + selfHeal** (Etappe 20, Branch `feature/argocd-autosync`) — drei
+    Zeilen in `k8s/argocd/application.yaml`:
+    ```yaml
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+    ```
+    | Feld | Wirkung |
+    |---|---|
+    | `automated` | synchronisiert von selbst, sobald Git sich ändert — kein Knopf mehr |
+    | `prune: true` | löscht Objekte, die aus Git **verschwunden** sind |
+    | `selfHeal: true` | dreht Änderungen im **Cluster** zurück, die nicht aus Git kommen |
+
+    **Bewiesen:** `kubectl scale deployment/notely --replicas=5` → ArgoCD stellte innerhalb
+    von Sekunden auf `replicas=2` zurück (Git sagt `count: 2`). So schnell, dass ein
+    nachträglich gestartetes `kubectl get pods -w` nichts mehr zu sehen bekam — der Beweis
+    lag in den Zahlen: 5 Pods vorher, 2 danach, ohne dass jemand zurückskaliert hat.
+
+    **ArgoCD korrigiert die Spezifikation, nicht den Zustand.** Es schreibt `spec.replicas`
+    im Deployment zurück; die überzähligen Pods räumt Kubernetes dann selbst ab.
+
+    **Die YAML-Falle dabei:** `syncPolicy` landete zuerst auf Tiefe 4 und damit *innerhalb*
+    von `destination`, `automated` daneben statt darunter. Kubernetes ignoriert das
+    stillschweigend — `spec.syncPolicy` blieb leer, ohne Fehlermeldung. Kontrolle, die es
+    vor dem Anwenden zeigt:
+    `python3 -c "import yaml; print(yaml.safe_load(open('k8s/argocd/application.yaml'))['spec'].get('syncPolicy'))"`
+
+    **Was die Automatik kostet:** `prune` macht einen Tippfehler in Git zu einer Löschung in
+    Produktion. `selfHeal` nimmt dir Notfall-Eingriffe per `kubectl` weg — der Weg führt ab
+    jetzt über Git, oder man schaltet die Automatik bewusst kurz ab.
+
 ## Wo wir gerade stehen
-`main` = `182ee76` (Merge PR #28), Etappe 18 in `main`.
-Auf Branch `feature/argocd-hooks`: PreSync-Hook + `targetRevision: main` + docs/.
+`main` = `4afc89f` (Merge PR #29), Arbeitsverzeichnis sauber, Etappe 19 fertig.
+ArgoCD: `main -> Synced / Healthy`, 16 verglichene Objekte, Job als PreSync-Hook nicht mehr
+in der Vergleichsliste. Nächster Schritt: **automatischer Sync + selfHeal**.
 
 ## 🔴 Offene Punkte
 1. **Nur noch im Hand-Pfad: keine Reihenfolge, Job-`spec` unveränderlich.** Über ArgoCD ist
@@ -607,15 +640,16 @@ Auf Branch `feature/argocd-hooks`: PreSync-Hook + `targetRevision: main` + docs/
    `sops -d`-Befehle nötig (siehe README). Im ArgoCD-Pfad umgangen durch ein Overlay ohne
    `secretGenerator` plus einmalig von Hand angelegte Secrets. Richtige Lösung: KSOPS-Plugin
    im ArgoCD-Repo-Server — dann muss der private age-Schlüssel als Secret in den Cluster.
-3. **Image-Diät**, kein Blocker: die 90,5 MB des venv enthalten `pip`, `setuptools` und
+3. **Waisen aus der Handarbeits-Zeit.** Im Cluster liegen mehrere alte
+   `notely-config-<hash>`-ConfigMaps sowie `notely-db-c6c5bf6h4b` und
+   `postgres-credentials-m487fkcmk5`. `prune` räumt sie **nicht** weg: es löscht nur, was
+   ArgoCD selbst verwaltet hat und was dann aus Git verschwunden ist. Vor dem Löschen prüfen,
+   was das laufende Deployment wirklich referenziert.
+4. **Image-Diät**, kein Blocker: die 90,5 MB des venv enthalten `pip`, `setuptools` und
    `.pyc`-Dateien, die zur Laufzeit niemand braucht. `pip install --no-compile` plus
    `pip uninstall -y pip setuptools` im Builder holen ~25 MB.
 
 ## Danach geplant
-- **Automatischer Sync + selfHeal** — bisher wird der Knopf gedrückt. Drei Zeilen
-  `syncPolicy.automated` (mit `prune` und `selfHeal`) machen ArgoCD selbsttätig. Der Versuch
-  dazu: `kubectl scale deployment/notely --replicas=5` und zusehen, wie ArgoCD auf 2
-  zurückstellt. Erst dann ist *drift* nicht mehr nur eine Behauptung.
 - **KSOPS im ArgoCD-Repo-Server** — dann fließen auch die Secrets über Git.
 - Echte Secret-Verwaltung: SOPS / Sealed Secrets / External Secrets Operator.
   (Aktuell steht das Postgres-Passwort im Klartext im Git — bewusst, nur für die lokale
