@@ -92,7 +92,7 @@ docs/           technologien.md (Lernnotizen: jede Technologie einfach erklärt)
 Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
 ```
 
-## Was schon fertig ist (in `main`, PR #35 = `19072c2`)
+## Was schon fertig ist (in `main`, PR #39 = `1f56c30`)
 1. **API + Tests** — `/healthz`, `/readyz`, CRUD `/notes`, `APP_VERSION` aus Env. 7 pytest-Tests, ruff sauber.
 2. **Container** — Multi-Stage Dockerfile, `python:3.12-slim`, non-root uid 10001,
    `ARG/ENV APP_VERSION` ganz unten (Layer-Cache), exec-form CMD, `--host 0.0.0.0`.
@@ -806,11 +806,22 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     `-1` ist relativ („einen Schritt zurück"), alternativ eine Revisions-ID absolut.
 
 ## Wo wir gerade stehen
-`main` = `19072c2` + Bot-Commit, Arbeitsverzeichnis sauber, Etappe 22 fertig.
+`main` = `1f56c30` (Merge PR #39). Arbeitsverzeichnis sauber, keine offenen Branches.
+ArgoCD: `Synced / Healthy`. Laufendes Image
+`ghcr.io/burhandevopsnew/notely-platform:sha-f4e2537…`.
 
 **Die GitOps-Schleife ist geschlossen:** Merge → CI baut, scannt und pusht multi-arch →
 CI pinnt den sha in prod- und argocd-Overlay → ArgoCD synct → PreSync-Hook migriert →
-App rollt aus. ArgoCD: `Synced / Healthy`. Kein Deploy-Befehl mehr von Hand.
+App rollt aus. Kein Deploy-Befehl mehr von Hand.
+
+**`paths-ignore` ist bewiesen:** Der Doku-Merge zu `1f56c30` hat `main` bewegt, aber keinen
+Workflow gestartet — `newTag` im Overlay und das laufende Image blieben unverändert auf
+`sha-f4e2537…`. Ein Doku-Merge deployt also nicht mehr.
+
+Nächster Schritt: einer der zwei Punkte unter „Danach geplant" (KSOPS oder Image-Diät) —
+oder eine weitere Ausfall-Übung. Beim Start den echten Zustand gegen diese Notiz prüfen:
+`git branch -vv`, `kubectl get application -n argocd`, laufendes Image über
+`kubectl get pods -l app=notely -o jsonpath='{.items[0].spec.containers[0].image}'`.
 
 ## 🔴 Offene Punkte
 1. **Nur noch im Hand-Pfad: keine Reihenfolge, Job-`spec` unveränderlich.** Über ArgoCD ist
