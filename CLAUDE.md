@@ -772,6 +772,39 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
 
     Danach 5 Objekte übrig, `/readyz` ready, ArgoCD `Synced / Healthy`.
 
+23. **Absichtlich kaputte Migration** (Etappe 24, Übung — nichts davon committet) — Ziel war
+    „grüne CI, gescheiterter Deploy", um den PreSync-Hook beim Blockieren zu beobachten.
+    Migration von Hand (`alembic revision` **ohne** `--autogenerate`, weil es keine
+    Modelländerung zu erkennen gab):
+    `op.add_column('notes', sa.Column('owner', sa.String(100), nullable=False))`.
+
+    **Der Versuch ging anders aus als geplant, und das war lehrreicher.** Erwartet: 12 grün,
+    weil das Modell die Spalte nicht kennt. Tatsächlich: **5 failed, 7 passed.**
+
+    Die Migration selbst lief durch (Test-DB: 0 Zeilen). Aber danach scheiterte jedes
+    `INSERT`: das SQL der App lautet
+    `INSERT INTO notes (id, title, body, created_at, archived)` — `owner` fehlt, die Spalte
+    ist `NOT NULL` ohne Vorgabewert → `NotNullViolation … Failing row contains (…, null)`.
+
+    **Erweiterte Lektion zu Etappe 7:** Eine `NOT NULL`-Spalte ohne `server_default` bricht
+    **zwei** Dinge — den `ALTER TABLE` auf bestehenden Zeilen *und* jedes künftige `INSERT`
+    von Code, der die Spalte nicht kennt. Ich hatte nur an den ersten Schaden gedacht.
+
+    **Welche Tests rot waren, sagt wieder alles:** genau die fünf, die **schreiben**
+    (`POST /notes`). Grün blieben `/healthz`, `/readyz`, leere Liste, 404, 422 — keiner davon
+    schreibt. **Die Testsuite hat die Migration gefangen**, die CI wäre rot geworden. Der
+    geplante Versuch ist mit dieser Migration also nicht baubar — und das ist die gute
+    Nachricht.
+
+    **Den blockierten Deploy hatten wir ohnehin schon erlebt:** beim Multi-Arch-Problem stand
+    der PreSync-Hook stundenlang in `ImagePullBackOff`, ArgoCD hing bei
+    `waiting for completion of hook`, und die alte Version bediente weiter Anfragen.
+
+    **`alembic downgrade -1`** hat zum Rücknehmen die selbst geschriebene `downgrade()`-Funktion
+    benutzt (`op.drop_column`). **Deshalb schreibt man sie**, auch wenn man sie fast nie
+    braucht — ohne sie kommt man nicht zurück, ohne die Datenbank von Hand anzufassen.
+    `-1` ist relativ („einen Schritt zurück"), alternativ eine Revisions-ID absolut.
+
 ## Wo wir gerade stehen
 `main` = `19072c2` + Bot-Commit, Arbeitsverzeichnis sauber, Etappe 22 fertig.
 
