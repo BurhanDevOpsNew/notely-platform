@@ -86,7 +86,6 @@ jobs:
           tags: |
             type=sha,format=long
             type=ref,event=pr
-            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build image for scanning
         uses: docker/build-push-action@v6
@@ -139,11 +138,13 @@ jobs:
             APP_VERSION=${{ github.sha }}
           cache-from: type=gha
 
-      - name: Pin the prod overlay to this image
+      - name: Pin the overlays to this image
         if: github.event_name == 'push'
         run: |
-          sed -i -E "s|^( *newTag: ).*|\1sha-${GITHUB_SHA}|" k8s/overlays/prod/kustomization.yaml
-          git --no-pager diff -- k8s/overlays/prod/kustomization.yaml
+          for f in k8s/overlays/prod/kustomization.yaml k8s/overlays/argocd/kustomization.yaml; do
+            sed -i -E "s|^( *newTag: ).*|\1sha-${GITHUB_SHA}|" "$f"
+          done
+          git --no-pager diff -- k8s/overlays/
 
       - name: Commit the pinned tag
         if: github.event_name == 'push'
