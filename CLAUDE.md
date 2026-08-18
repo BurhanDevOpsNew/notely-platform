@@ -92,7 +92,7 @@ docs/           technologien.md (Lernnotizen: jede Technologie einfach erklärt)
 Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
 ```
 
-## Was schon fertig ist (in `main`, PR #29 = `4afc89f`)
+## Was schon fertig ist (in `main`, PR #32 = `a23b24d`)
 1. **API + Tests** — `/healthz`, `/readyz`, CRUD `/notes`, `APP_VERSION` aus Env. 7 pytest-Tests, ruff sauber.
 2. **Container** — Multi-Stage Dockerfile, `python:3.12-slim`, non-root uid 10001,
    `ARG/ENV APP_VERSION` ganz unten (Layer-Cache), exec-form CMD, `--host 0.0.0.0`.
@@ -659,17 +659,56 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     Anführungszeichen ersetzt die **Shell vorher** — und die kennt sie da noch nicht. In der
     CI ist `GITHUB_SHA` eine echte Umgebungsvariable, dort greift es.
 
+    **Bewiesen:** Lauf zu `3e40fc8` auf `main` erzeugte
+    `a23b24d chore(deploy): pin prod overlay to sha-3e40fc81… [skip ci]`,
+    Autor `github-actions[bot]`, **1 file changed, 1 insertion, 1 deletion**. Der sha im Tag
+    ist genau der Commit, der den Lauf ausgelöst hat. Und es gibt **keinen zweiten**
+    Bot-Commit — `[skip ci]` hat gehalten. `newTag: latest` → `newTag: sha-3e40fc81…`:
+    ab jetzt ist jederzeit nachweisbar, welcher Commit in prod läuft, und ein Rollback ist
+    ein `git revert`.
+
+    **Zwei Anläufe, und beide Male dieselbe Ursache:** Der `contents: write`-Fix und die
+    40 Zeilen CLAUDE.md waren nach dem `git add -A` entstanden und fehlten deshalb in PR #31.
+    Der Lauf scheiterte an `403`. **Regel: `git add -A` ist der letzte Schritt vor
+    `git commit`, nicht der erste.** Alles danach ist für den Commit unsichtbar und steht in
+    `git status --short` als `MM` (Buchstabe links *und* rechts). Nachgereicht in PR #32.
+
     **Ehrliche Grenze:** ArgoCD überwacht `k8s/overlays/argocd`, **nicht** `prod`. Dieser
     Commit löst also noch kein Deployment aus — gebaut ist der Mechanismus, nicht die
     geschlossene Schleife. Dafür müsste ArgoCD auf `prod` zeigen, und das Image aus GHCR
     müsste für den kind-Cluster ziehbar sein.
 
-## Wo wir gerade stehen
-`main` = `4afc89f` (Merge PR #29), Arbeitsverzeichnis sauber, Etappe 19 fertig.
-ArgoCD: `main -> Synced / Healthy`, 16 verglichene Objekte, Job als PreSync-Hook nicht mehr
-in der Vergleichsliste. Nächster Schritt: **automatischer Sync + selfHeal**.
+21. **Die Schleife geschlossen** (Etappe 22, Branch `feature/close-the-loop`) — das
+    ArgoCD-Overlay zieht jetzt aus GHCR statt aus dem lokal geladenen Image:
+    ```yaml
+    images:
+      - name: notely
+        newName: ghcr.io/burhandevopsnew/notely-platform
+        newTag: sha-<40 Zeichen>
+    ```
+    Damit fällt `kind load` für den ArgoCD-Pfad **weg** — der Cluster zieht aus derselben
+    Quelle wie jede andere Umgebung. Die CI pinnt beide Overlays (`prod` und `argocd`) in
+    einer `for`-Schleife und committet mit `git add k8s/overlays/` (**Ordner**, nicht
+    Einzeldatei — sonst fehlt die argocd-Änderung im Commit; dieselbe Mechanik wie `MM`).
 
-## 🔴 Offene Punkte
+    **Vorher geprüft, statt gehofft:** Ist das GHCR-Paket öffentlich? Anonymes Token holen
+    und das Manifest abfragen → `HTTP 200`, also kein `imagePullSecret` nötig.
+    ```
+    curl -s "https://ghcr.io/token?scope=repository:<owner>/<repo>:pull&service=ghcr.io"
+    curl -H "Authorization: Bearer <token>" https://ghcr.io/v2/<owner>/<repo>/manifests/<tag>
+    ```
+    Wäre es privat, bräuchte der Cluster ein Pull-Secret. Öffentlich heißt: **jeder kann das
+    Image herunterladen** — bei einer Demo-App in Ordnung, bei Firmencode nicht.
+
+    **Einen Tag nur setzen, wenn man weiß, dass er existiert.** `sha-3e40fc81…` war vorher
+    per Manifest-Abfrage bestätigt; ein geratener Tag endet in `ImagePullBackOff`.
+
+    **`imagePullPolicy: IfNotPresent` passt jetzt genau:** ein sha-Tag ist unveränderlich,
+    also darf der Cluster ihn cachen. Bei einem wandernden `latest` wäre `Always` nötig.
+
+## Wo wir gerade stehen
+`main` = `a23b24d` (Bot-Commit nach PR #32), Arbeitsverzeichnis sauber,
+Etappe 21 fertig. ArgoCD: `main -> Synced / Healthy`, automatischer Sync + selfHeal aktiv. Offene Punkte
 1. **Nur noch im Hand-Pfad: keine Reihenfolge, Job-`spec` unveränderlich.** Über ArgoCD ist
    das gelöst (`PreSync`-Hook, siehe Punkt 18). Wer weiterhin `kubectl apply -k` benutzt,
    braucht davor `kubectl delete job notely-migrate --ignore-not-found` und hat keine
@@ -689,8 +728,6 @@ in der Vergleichsliste. Nächster Schritt: **automatischer Sync + selfHeal**.
 
 ## Danach geplant
 - **KSOPS im ArgoCD-Repo-Server** — dann fließen auch die Secrets über Git.
-- **Die Schleife wirklich schließen** — ArgoCD auf ein Overlay zeigen lassen, dessen Image
-  aus GHCR kommt und dessen `newTag` die CI schreibt. Dann deployt ein Merge von selbst.
 - Echte Secret-Verwaltung: SOPS / Sealed Secrets / External Secrets Operator.
   (Aktuell steht das Postgres-Passwort im Klartext im Git — bewusst, nur für die lokale
   Wegwerf-DB, und Burhan weiß, dass das sonst nicht geht.)
