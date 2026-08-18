@@ -134,3 +134,22 @@ jobs:
           build-args: |
             APP_VERSION=${{ github.sha }}
           cache-from: type=gha
+
+      - name: Pin the prod overlay to this image
+        if: github.event_name == 'push'
+        run: |
+          sed -i -E "s|^( *newTag: ).*|\1sha-${GITHUB_SHA}|" k8s/overlays/prod/kustomization.yaml
+          git --no-pager diff -- k8s/overlays/prod/kustomization.yaml
+
+      - name: Commit the pinned tag
+        if: github.event_name == 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add k8s/overlays/prod/kustomization.yaml
+          if git diff --cached --quiet; then
+            echo "Tag unverändert, nichts zu committen"
+          else
+            git commit -m "chore(deploy): pin prod overlay to sha-${GITHUB_SHA} [skip ci]"
+            git push origin HEAD:main
+          fi
