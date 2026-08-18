@@ -13,12 +13,65 @@ Die Anwendung selbst ist bewusst schlicht. Interessant ist, was darum herum steh
 | API | FastAPI, CRUD auf `/notes`, `PATCH` für Teiländerungen, `/healthz`, `/readyz`, `/metrics` |
 | Datenbank | PostgreSQL 17, SQLAlchemy 2.0, Alembic-Migrationen |
 | Container | Multi-Stage-Dockerfile, `python:3.12-slim`, non-root (uid 10001), read-only Dateisystem |
-| CI | GitHub Actions: ruff + pytest gegen echtes Postgres, Trivy-Scan, SBOM, Push nach GHCR |
-| Kubernetes | Kustomize (base + Overlays), 2 Replicas, PVC für Postgres, Migration als Job |
+| CI | GitHub Actions: ruff + pytest gegen echtes Postgres, Trivy-Tor, SBOM, Multi-Arch-Push (amd64 + arm64) nach GHCR, sha-Tag zurück nach Git |
+| Kubernetes | Kustomize (base + Overlays), 2 Replicas, PVC für Postgres, Migration als PreSync-Hook |
+| GitOps | ArgoCD im Cluster: ein Merge nach `main` **ist** das Deployment |
 | Observability | JSON-Logs, Prometheus mit eigener Scrape-Config, Alarmregeln, Alertmanager |
 | Tests | 12 pytest-Tests, prüfen HTTP-Verhalten statt Interna |
 
-## Lokal starten
+## Wie deployt wird: GitOps
+
+Es gibt keinen Deploy-Befehl. Ein Merge nach `main` löst die ganze Kette aus:
+
+```
+Merge nach main
+   │
+   ├─ CI: ruff + pytest gegen echtes Postgres
+   ├─ CI: Image für amd64 + arm64 bauen, Trivy-Tor, SBOM
+   ├─ CI: Push nach GHCR mit unveränderlichem Tag  sha-<commit>
+   └─ CI: schreibt diesen Tag zurück in die Overlays (Commit mit [skip ci])
+              │
+              ▼
+       ArgoCD (im Cluster) liest main, sieht die Änderung
+              │
+              ├─ PreSync-Hook: alembic upgrade head  (läuft genau einmal, wartet)
+              └─ danach rollt das Deployment
+```
+
+Der `[skip ci]`-Vermerk ist die Bremse gegen eine Endlosschleife: der Commit der CI
+löst keinen neuen Lauf aus.
+
+Zustand abfragen:
+
+```bash
+kubectl get application -n argocd                       # Synced / Healthy?
+kubectl get application notely -n argocd -o jsonpath='{.status.sync.revision}'
+git rev-parse origin/main                               # beide Werte vergleichen
+kubectl get pods -l app=notely \
+  -o jsonpath='{range .items[*]}{.spec.containers[0].image}{"\n"}{end}'
+```
+
+`Synced` gilt gegen die Revision, die ArgoCD **zuletzt verglichen** hat — nicht
+zwangsläufig gegen den neuesten Commit. Deshalb immer beide Werte gegeneinander halten.
+ArgoCD prüft alle drei Minuten; erzwingen geht mit:
+
+```bash
+kubectl patch application notely -n argocd --type merge \
+  -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}'
+```
+
+Die Oberfläche erreicht man über `kubectl port-forward svc/argocd-server -n argocd 8081:443`
+und dann **https**://localhost:8081. Sie ist nur eine Ansicht: der `SYNCHRONIZE`-Knopf
+schreibt das Feld `operation` in das Application-Objekt, dasselbe geht per `kubectl patch`.
+
+**Zwei Pfade, absichtlich getrennt:**
+
+| | Overlay | Image | Geheimnisse |
+|---|---|---|---|
+| **GitOps** (ArgoCD) | `k8s/overlays/argocd` | aus GHCR, `sha-<commit>` | einmalig von Hand angelegt |
+| **Hand-Pfad** (lokal) | `k8s/overlays/local` | lokal gebaut, `kind load` | `sops -d` vor jedem `apply` |
+
+## Lokal starten (Hand-Pfad, ohne ArgoCD)
 
 Voraussetzungen: Podman, kind, kubectl, Python 3.12, `sops` und `age`.
 
@@ -116,7 +169,9 @@ alembic/        Migrationen (env.py liest DATABASE_URL aus der Umgebung)
 k8s/base/       Deployment, Service, Ingress, Migrations-Job
 k8s/postgres/   PVC, Deployment, Service
 k8s/monitoring/ Prometheus, Alertmanager, Scrape-Config, Alarmregeln
-k8s/overlays/   local und prod
+k8s/argocd/     ArgoCD-Application (wird einmalig von Hand angewendet)
+k8s/overlays/   local (Hand-Pfad), prod, argocd (von ArgoCD überwacht)
+docs/           technologien.md — jede eingesetzte Technologie einfach erklärt
 ```
 
 ## Entscheidungen und ihre Begründung
@@ -156,6 +211,32 @@ dann ist man schlechter dran als ohne.
 **TLS wird am Ingress terminiert.** Die Anwendung spricht bewusst HTTP. Zertifikate liegen
 an einer Stelle, die Anwendung weiß nichts davon.
 
+**Der Migrations-Job ist ein PreSync-Hook, kein normales Objekt.** Er hat
+`ttlSecondsAfterFinished` und löscht sich selbst — damit stand er in ArgoCD dauerhaft auf
+`OutOfSync`: in Git vorhanden, im Cluster nicht. Zwei Annotationen lösen drei Probleme
+zugleich: Hooks werden nicht mit Git verglichen, `PreSync` läuft **vor** dem Rest und
+wartet (das ist die Reihenfolge-Garantie, die `kubectl apply` nie geben konnte), und
+`hook-delete-policy: BeforeHookCreation` umgeht die unveränderliche Job-`spec`.
+
+**ArgoCD hat ein eigenes Overlay ohne `secretGenerator`.** ArgoCD führt `kustomize build`
+aus und kann kein SOPS. Das `local`-Overlay verlangt eine entschlüsselte Datei, die
+absichtlich nicht im Repository liegt — ArgoCD scheiterte an „file not found". Die beiden
+Secrets sind deshalb einmalig von Hand angelegt. Das ist das **„secret zero"**-Problem:
+irgendein erstes Geheimnis muss immer von außen kommen. Mit KSOPS wäre es nur verschoben,
+dann wäre der age-Schlüssel das erste Geheimnis. Verschieben ja, abschaffen nein.
+
+**Das Image wird für amd64 und arm64 gebaut.** Der GitHub-Runner ist amd64, der lokale
+kind-Cluster läuft auf Apple Silicon. Ein amd64-Image endet dort in
+`no match for platform in manifest` — und weil der Migrations-Job ein PreSync-Hook ist,
+blockiert das den gesamten Sync. Der arm64-Teil läuft unter QEMU-Emulation und kostet
+Bauzeit; dafür funktioniert dasselbe Tag auf jedem Rechner. Der Scan-Build bleibt
+einplattformig, weil `load: true` kein Multi-Plattform-Image in den lokalen Daemon laden kann.
+
+**Deployt wird auf einen sha-Tag, nicht auf `latest`.** Ein sha-Tag ist unveränderlich:
+man kann jederzeit sagen, welcher Commit läuft, und ein Rollback ist ein `git revert`.
+`latest` wird gar nicht mehr gepusht — es wäre für Deployments schädlich und war zugleich
+der Tag, an dem GHCRs Drosselung zuschlug.
+
 **Geheimnisse liegen verschlüsselt im Repository, nicht daneben.** SOPS verschlüsselt die
 **Werte**, nicht die Datei: `POSTGRES_PASSWORD=ENC[AES256_GCM,...]`. Ein Diff im Pull
 Request zeigt also, *welches* Geheimnis sich geändert hat, ohne es zu verraten. Gewählt
@@ -169,12 +250,20 @@ Rechner bleibt und nichts im Cluster liegen muss.
   Wegwerf-Passwort ist das hinnehmbar. Bei einem echten Geheimnis ist die einzige richtige
   Antwort **rotieren** — Historie umschreiben hilft nur scheinbar, weil Klone und Forks die
   alten Commits behalten.
-- Kustomize kann kein SOPS, deshalb ist vor jedem `apply` ein manueller `sops -d`-Schritt
-  nötig. Produktiv nimmt man dafür den KSOPS-Plugin oder einen Schritt in der CI.
+- Kustomize kann kein SOPS. Im Hand-Pfad ist vor jedem `apply` ein manueller
+  `sops -d`-Schritt nötig; im GitOps-Pfad umgangen durch ein Overlay ohne `secretGenerator`
+  plus zwei einmalig von Hand angelegte Secrets. Richtige Lösung: KSOPS im
+  ArgoCD-Repo-Server — dann müsste allerdings der private age-Schlüssel im Cluster liegen.
 - `k8s/overlays/prod` ist strukturell vollständig, wird aber nirgends deployt: der
   Datenbank-Host ist ein Platzhalter.
-- `kubectl apply` ordnet Migrations-Job und Deployment nicht. Unkritisch, weil `/readyz` nur
-  `SELECT 1` prüft. Echte Reihenfolge gäbe es mit Helm-Hooks oder ArgoCD-Sync-Waves.
+- Die Reihenfolge Migration → Deployment ist **nur im GitOps-Pfad** garantiert (PreSync-Hook).
+  Wer `kubectl apply -k` benutzt, braucht davor `kubectl delete job notely-migrate
+  --ignore-not-found` und hat keine Garantie. Unkritisch, weil `/readyz` nur `SELECT 1` prüft.
+- **Jeder Merge nach `main` deployt** — auch einer, der nur Dokumentation ändert. Ein
+  `paths-ignore` im Workflow wäre das Mittel dagegen.
+- Im Cluster liegen mehrere Waisen aus der Zeit vor ArgoCD (alte `notely-config-*`,
+  `notely-db-*`, `postgres-credentials-*`). `prune` räumt sie nicht: es löscht nur, was
+  ArgoCD selbst verwaltet hat und was dann aus Git verschwunden ist.
 - Prometheus schreibt in ein `emptyDir` — Messdaten überleben keinen Pod-Neustart.
 - Der Alertmanager-Receiver hat keine Integration. Alarme sind in der Oberfläche sichtbar,
   werden aber nirgends zugestellt.
