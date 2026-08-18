@@ -82,14 +82,17 @@ k8s/postgres/   pvc.yaml, deployment.yaml, service.yaml, kustomization.yaml
 k8s/monitoring/ rbac.yaml, prometheus.yml (Scrape-Config), alerts.yml (Regeln),
                 alertmanager.yml (Routing), deployment.yaml, service.yaml,
                 alertmanager-deployment.yaml (Deployment + Service), kustomization.yaml
-k8s/overlays/   local/ und prod/: kustomization.yaml + *.enc.env (SOPS-verschlüsselt;
-                die entschlüsselten *.env sind gitignoriert)
+k8s/argocd/     application.yaml (ArgoCD-Application, wird von Hand angewendet)
+k8s/overlays/   local/, prod/, argocd/: kustomization.yaml; local+prod mit *.enc.env
+                (SOPS-verschlüsselt, die entschlüsselten *.env sind gitignoriert);
+                argocd/ ohne secretGenerator (ArgoCD kann kein SOPS)
+docs/           technologien.md (Lernnotizen: jede Technologie einfach erklärt)
 .sops.yaml      creation_rules + öffentlicher age-Schlüssel
 .github/workflows/ci.yml
 Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
 ```
 
-## Was schon fertig ist (in `main`, PR #25 = `db48942`)
+## Was schon fertig ist (in `main`, PR #28 = `182ee76`)
 1. **API + Tests** — `/healthz`, `/readyz`, CRUD `/notes`, `APP_VERSION` aus Env. 7 pytest-Tests, ruff sauber.
 2. **Container** — Multi-Stage Dockerfile, `python:3.12-slim`, non-root uid 10001,
    `ARG/ENV APP_VERSION` ganz unten (Layer-Cache), exec-form CMD, `--host 0.0.0.0`.
@@ -532,30 +535,88 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     kein Beweis für den Fix — solche Fehlschlüsse fallen nur auf, wenn man fragt, *was* eine
     Ausgabe eigentlich zeigt.
 
+18. **GitOps mit ArgoCD** (Etappe 18–19, Branch `feature/argocd`, dann `feature/argocd-hooks`)
+    — ArgoCD im eigenen Namespace `argocd` (offizielles `install.yaml`, ~50 Objekte),
+    dazu `k8s/argocd/application.yaml` (Objekt `kind: Application`) und ein eigenes Overlay
+    `k8s/overlays/argocd/`. Zugriff auf die Oberfläche über
+    `kubectl port-forward svc/argocd-server -n argocd 8081:443`, dann **https**://localhost:8081
+    (selbstsigniertes Zertifikat, Warnung durchklicken). Startpasswort:
+    `kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' | base64 -d`.
+
+    **Warum ein eigenes Overlay:** ArgoCD führt `kustomize build` aus und kann **kein SOPS**.
+    Das `local`-Overlay verlangt `notely-db.env`, das absichtlich nicht im Repo liegt → ArgoCD
+    scheiterte an „file not found". Das ArgoCD-Overlay hat deshalb **keinen `secretGenerator`**;
+    die Secrets tragen ihre schlichten Namen und wurden **einmal von Hand** angelegt
+    (`kubectl create secret generic … --from-env-file=…`). Das nennt man **„secret zero"**:
+    irgendein erstes Geheimnis muss immer von außen kommen. Mit KSOPS wäre es nur verschoben —
+    dann ist der age-Schlüssel das erste Geheimnis. **Verschieben ja, abschaffen nein.**
+
+    **Der Job war dauerhaft `OutOfSync`** — er hat `ttlSecondsAfterFinished: 300` und löscht
+    sich selbst. Er steht in Git, aber nicht im Cluster. **Ein Objekt, das sich selbst löscht,
+    passt nicht in das Vergleichsmodell von ArgoCD.** Lösung: zwei Annotationen am Job,
+    ```yaml
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    ```
+    Damit lösen sich **drei** Dinge auf einmal: Hooks werden nicht mit Git verglichen (kein
+    `OutOfSync`); `PreSync` läuft **vor** dem restlichen Sync und wartet → **offener Punkt 1
+    (Reihenfolge) ist gelöst**; `BeforeHookCreation` löscht den alten Job vorher → kein
+    `field is immutable` mehr. Für den Hand-Pfad (`kubectl apply -k`) sind die Annotationen
+    wirkungslos und damit harmlos.
+
+    **Die Fehler dieser Etappe, alle lehrreich:**
+    1. `targetRevision: feature/argocd`, dann Branch auf GitHub **gelöscht ohne zu mergen** →
+       `unable to resolve 'feature/argocd' to a commit SHA`, Status `Unknown`. Gerettet über
+       den „Restore branch"-Knopf; der Commit lag lokal ohnehin noch. **Fehlerklasse: Löschen
+       vor dem Zusammenführen.** `git branch -d` schützt lokal davor, GitHub nicht.
+    2. **ArgoCD prüft nur alle 3 Minuten** und zeigt bis dahin den alten Zustand samt alter
+       Fehlermeldung. Vor dem Glauben an eine Meldung deren `lastTransitionTime` lesen.
+       Erzwingen: `kubectl patch application notely -n argocd --type merge -p
+       '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}'`.
+    3. `port-forward` läuft nur, solange der Befehl läuft — bei „connection refused" auf 8081
+       ist fast immer der Tunnel abgerissen, nicht ArgoCD kaputt.
+    4. **`/healthz` über den Ingress ist leer** (`200`, `text/html`, 0 Bytes): ingress-nginx
+       reserviert diesen Pfad für seinen **eigenen** Gesundheitscheck und antwortet selbst.
+       `/readyz`, `/notes`, `/metrics` gehen durch. Unkritisch, weil die `livenessProbe`
+       **direkt am Pod** fragt. **Merksatz: der Ingress ist nicht die einzige Tür.**
+
+    **Die Oberfläche ist nur eine Ansicht.** Der `SYNCHRONIZE`-Knopf schreibt das Feld
+    `operation` in das Application-Objekt. Dasselbe von Hand:
+    `kubectl patch application notely -n argocd --type merge -p
+    '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}'`.
+    Deshalb ist ArgoCD vollständig skriptbar und braucht keinen Browser.
+
+    **Bewiesen:** nach dem Sync `Synced` / `Healthy`, neue Pods, und die App meldete
+    `{"status":"ok","version":"gitops"}` — die laufende App kam also aus
+    `k8s/overlays/argocd` und nicht mehr aus dem, was von Hand angewendet worden war.
+
+    **Bootstrap-Problem:** `application.yaml` wird per `kubectl apply -f` von Hand angewendet
+    und verwaltet sich **nicht selbst**. Ändert sich `targetRevision` in Git, muss die Datei
+    erneut angewendet werden. Dieselbe Form wie „secret zero".
+
 ## Wo wir gerade stehen
-`main` = `db48942` (Merge PR #25), Arbeitsverzeichnis sauber, Etappe 17 fertig.
-Nächster Schritt: **GitOps mit ArgoCD** (siehe „Danach geplant").
+`main` = `182ee76` (Merge PR #28), Etappe 18 in `main`.
+Auf Branch `feature/argocd-hooks`: PreSync-Hook + `targetRevision: main` + docs/.
 
 ## 🔴 Offene Punkte
-1. **Job und Deployment werden gleichzeitig angewendet.** `kubectl apply -k` kennt keine
-   Reihenfolge — es gibt keine Garantie, dass die Migration vor den App-Pods fertig ist.
-   Unkritisch, solange `/readyz` nur `SELECT 1` prüft: die Pods werden bereit, `GET /notes`
-   scheitert für ein paar Sekunden. Echte Reihenfolge gäbe es mit Helm-Hooks,
-   ArgoCD-Sync-Waves oder einem `initContainer`, der auf die Job-Completion wartet.
-   Dazu: **die `spec` eines Jobs ist unveränderlich.** Ein zweites `apply` auf denselben
-   Job-Namen bringt `field is immutable` — deshalb gehört
-   `kubectl delete job notely-migrate --ignore-not-found` vor jedes `apply`.
-2. **Kustomize kann kein SOPS.** Vor jedem `apply` sind die zwei `sops -d`-Befehle nötig
-   (siehe README). Produktiv nimmt man den KSOPS-Plugin oder einen CI-Schritt.
+1. **Nur noch im Hand-Pfad: keine Reihenfolge, Job-`spec` unveränderlich.** Über ArgoCD ist
+   das gelöst (`PreSync`-Hook, siehe Punkt 18). Wer weiterhin `kubectl apply -k` benutzt,
+   braucht davor `kubectl delete job notely-migrate --ignore-not-found` und hat keine
+   Garantie, dass die Migration vor den App-Pods fertig ist.
+2. **Kustomize kann kein SOPS.** Im Hand-Pfad sind vor jedem `apply` die zwei
+   `sops -d`-Befehle nötig (siehe README). Im ArgoCD-Pfad umgangen durch ein Overlay ohne
+   `secretGenerator` plus einmalig von Hand angelegte Secrets. Richtige Lösung: KSOPS-Plugin
+   im ArgoCD-Repo-Server — dann muss der private age-Schlüssel als Secret in den Cluster.
 3. **Image-Diät**, kein Blocker: die 90,5 MB des venv enthalten `pip`, `setuptools` und
    `.pyc`-Dateien, die zur Laufzeit niemand braucht. `pip install --no-compile` plus
    `pip uninstall -y pip setuptools` im Builder holen ~25 MB.
 
 ## Danach geplant
-- **GitOps mit ArgoCD** — die größte verbleibende Lücke: deployt wird per Hand vom Laptop.
-  ArgoCD beobachtet das Repo und zieht selbst, macht *drift* sichtbar, und räumt beide
-  offenen Punkte mit ab (Sync-Waves = Reihenfolge für den Job, KSOPS = kein manuelles
-  `sops -d` mehr).
+- **Automatischer Sync + selfHeal** — bisher wird der Knopf gedrückt. Drei Zeilen
+  `syncPolicy.automated` (mit `prune` und `selfHeal`) machen ArgoCD selbsttätig. Der Versuch
+  dazu: `kubectl scale deployment/notely --replicas=5` und zusehen, wie ArgoCD auf 2
+  zurückstellt. Erst dann ist *drift* nicht mehr nur eine Behauptung.
+- **KSOPS im ArgoCD-Repo-Server** — dann fließen auch die Secrets über Git.
 - Echte Secret-Verwaltung: SOPS / Sealed Secrets / External Secrets Operator.
   (Aktuell steht das Postgres-Passwort im Klartext im Git — bewusst, nur für die lokale
   Wegwerf-DB, und Burhan weiß, dass das sonst nicht geht.)

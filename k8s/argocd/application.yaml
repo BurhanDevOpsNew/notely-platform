@@ -8,7 +8,7 @@ spec:
 
   source:
     repoURL: https://github.com/BurhanDevOpsNew/notely-platform.git
-    targetRevision: feature/argocd
+    targetRevision: main
     path: k8s/overlays/argocd
 
   destination:
