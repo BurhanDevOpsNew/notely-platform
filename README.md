@@ -261,9 +261,9 @@ Rechner bleibt und nichts im Cluster liegen muss.
   --ignore-not-found` und hat keine Garantie. Unkritisch, weil `/readyz` nur `SELECT 1` prüft.
 - **Jeder Merge nach `main` deployt** — auch einer, der nur Dokumentation ändert. Ein
   `paths-ignore` im Workflow wäre das Mittel dagegen.
-- Im Cluster liegen mehrere Waisen aus der Zeit vor ArgoCD (alte `notely-config-*`,
-  `notely-db-*`, `postgres-credentials-*`). `prune` räumt sie nicht: es löscht nur, was
-  ArgoCD selbst verwaltet hat und was dann aus Git verschwunden ist.
+- Generierte ConfigMaps und Secrets sammeln sich an: jeder neue Inhalts-Hash erzeugt ein
+  neues Objekt, das alte bleibt liegen. `prune` räumt sie nicht, weil ArgoCD nur löscht, was
+  es selbst verwaltet hat. Aufräumen ist bisher Handarbeit.
 - Prometheus schreibt in ein `emptyDir` — Messdaten überleben keinen Pod-Neustart.
 - Der Alertmanager-Receiver hat keine Integration. Alarme sind in der Oberfläche sichtbar,
   werden aber nirgends zugestellt.
