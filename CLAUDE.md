@@ -754,6 +754,24 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     Das Migrations-Log zeigte **kein** `Running upgrade`: die DB war schon auf `head`, der
     Hook lief trotzdem. **Ein PreSync-Hook, der nichts tut, ist der Normalfall.**
 
+22. **Waisen aufgeräumt** (Etappe 23) — 8 ungenutzte Objekte gelöscht: zwei alte
+    `notely-config-*` und **vier** `prometheus-config-*` (je eine pro Änderung an
+    `prometheus.yml`/`alerts.yml`), dazu die vom local-Overlay erzeugten
+    `notely-db-c6c5bf6h4b` und `postgres-credentials-m487fkcmk5`.
+
+    **Der Mechanismus, der den Rollout schenkt, hinterlässt Spuren:** jeder neue
+    Inhalts-Hash erzeugt ein neues Objekt, das alte bleibt liegen. `prune` räumt es nicht —
+    es löscht nur, was ArgoCD selbst verwaltet hat und was dann aus Git verschwunden ist.
+
+    **Vorgehen vor dem Löschen:** die **Live-Objekte** nach ihren Referenzen fragen
+    (`kubectl get deploy <name> -o json`), nicht die Manifeste lesen. Danach explizit die
+    unbenutzten Namen ausschreiben statt ein `grep`-Muster zu benutzen — **bei zerstörenden
+    Befehlen zählt Explizitheit mehr als Kürze.** Und die Frage „wo ist die Kopie?" war
+    beantwortet: alle acht entstehen aus Git neu (`configMapGenerator` bzw. `sops -d` +
+    `apply -k`).
+
+    Danach 5 Objekte übrig, `/readyz` ready, ArgoCD `Synced / Healthy`.
+
 ## Wo wir gerade stehen
 `main` = `19072c2` + Bot-Commit, Arbeitsverzeichnis sauber, Etappe 22 fertig.
 
@@ -770,12 +788,7 @@ App rollt aus. ArgoCD: `Synced / Healthy`. Kein Deploy-Befehl mehr von Hand.
    `sops -d`-Befehle nötig (siehe README). Im ArgoCD-Pfad umgangen durch ein Overlay ohne
    `secretGenerator` plus einmalig von Hand angelegte Secrets. Richtige Lösung: KSOPS-Plugin
    im ArgoCD-Repo-Server — dann muss der private age-Schlüssel als Secret in den Cluster.
-3. **Waisen aus der Handarbeits-Zeit.** Im Cluster liegen mehrere alte
-   `notely-config-<hash>`-ConfigMaps sowie `notely-db-c6c5bf6h4b` und
-   `postgres-credentials-m487fkcmk5`. `prune` räumt sie **nicht** weg: es löscht nur, was
-   ArgoCD selbst verwaltet hat und was dann aus Git verschwunden ist. Vor dem Löschen prüfen,
-   was das laufende Deployment wirklich referenziert.
-4. **Image-Diät**, kein Blocker: die 90,5 MB des venv enthalten `pip`, `setuptools` und
+3. **Image-Diät**, kein Blocker: die 90,5 MB des venv enthalten `pip`, `setuptools` und
    `.pyc`-Dateien, die zur Laufzeit niemand braucht. `pip install --no-compile` plus
    `pip uninstall -y pip setuptools` im Builder holen ~25 MB.
 
