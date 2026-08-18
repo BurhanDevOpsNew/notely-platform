@@ -92,7 +92,7 @@ docs/           technologien.md (Lernnotizen: jede Technologie einfach erklärt)
 Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
 ```
 
-## Was schon fertig ist (in `main`, PR #32 = `a23b24d`)
+## Was schon fertig ist (in `main`, PR #35 = `19072c2`)
 1. **API + Tests** — `/healthz`, `/readyz`, CRUD `/notes`, `APP_VERSION` aus Env. 7 pytest-Tests, ruff sauber.
 2. **Container** — Multi-Stage Dockerfile, `python:3.12-slim`, non-root uid 10001,
    `ARG/ENV APP_VERSION` ganz unten (Layer-Cache), exec-form CMD, `--host 0.0.0.0`.
@@ -727,9 +727,41 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     ArgoCD meldete `Healthy`. **Ein blockierter PreSync-Hook verhindert die neue Version,
     reißt aber die laufende nicht mit.**
 
+    **Zwei weitere Fehler auf dem Weg, beide lehrreich:**
+    1. **GHCR-Drosselung.** Der Multi-Arch-Push scheiterte mit
+       `denied: permission_denied … 403 Forbidden` — im JSON-Rumpf stand aber
+       `You have exceeded a secondary rate limit`. **Meldung mit irreführender Überschrift:**
+       die Ursache steht erst im Rumpf. Kein Code-Problem; Abhilfe: warten und
+       „Re-run failed jobs". Als Folge wurde `type=raw,value=latest` aus der metadata-action
+       entfernt — ein Tag weniger heißt weniger Schreibvorgänge, und für Deployments ist ein
+       wandernder Tag ohnehin schädlich.
+    2. **Veralteter Editor-Puffer.** Die `for`-Schleife im Pin-Step war in PR #33 geprüft
+       drin und nach PR #34 wieder weg — beim Einfügen von QEMU/`platforms` hatte VS Code
+       eine ältere Fassung im Speicher und überschrieb sie beim Speichern. Erkennungsmerkmal:
+       eine Änderung, die man geprüft hatte, ist ohne Zutun verschwunden. Gegenmittel: nach
+       `git pull` oder Branch-Wechsel die Datei im Editor schließen und neu öffnen.
+
+    **Bewiesen (PR #35, `19072c2`) — die Schleife läuft:**
+    ```
+    main:            19072c2
+    argocd-Overlay:  newTag: sha-19072c2…      von der CI geschrieben
+    Migrations-Job:  Complete 1/1 in 9s        PreSync-Hook
+    Pods:            ghcr.io/…:sha-19072c2…    beide Running
+    ArgoCD:          Synced / Healthy — successfully synced (all tasks run)
+    ```
+    **Kein Deploy-Befehl getippt** — nur ein PR gemergt. Derselbe sha steht in Git, in der
+    Registry, im Overlay und in den laufenden Pods; ein Rollback ist ein `git revert`.
+    Das Migrations-Log zeigte **kein** `Running upgrade`: die DB war schon auf `head`, der
+    Hook lief trotzdem. **Ein PreSync-Hook, der nichts tut, ist der Normalfall.**
+
 ## Wo wir gerade stehen
-`main` = `a23b24d` (Bot-Commit nach PR #32), Arbeitsverzeichnis sauber,
-Etappe 21 fertig. ArgoCD: `main -> Synced / Healthy`, automatischer Sync + selfHeal aktiv. Offene Punkte
+`main` = `19072c2` + Bot-Commit, Arbeitsverzeichnis sauber, Etappe 22 fertig.
+
+**Die GitOps-Schleife ist geschlossen:** Merge → CI baut, scannt und pusht multi-arch →
+CI pinnt den sha in prod- und argocd-Overlay → ArgoCD synct → PreSync-Hook migriert →
+App rollt aus. ArgoCD: `Synced / Healthy`. Kein Deploy-Befehl mehr von Hand.
+
+## 🔴 Offene Punkte
 1. **Nur noch im Hand-Pfad: keine Reihenfolge, Job-`spec` unveränderlich.** Über ArgoCD ist
    das gelöst (`PreSync`-Hook, siehe Punkt 18). Wer weiterhin `kubectl apply -k` benutzt,
    braucht davor `kubectl delete job notely-migrate --ignore-not-found` und hat keine
