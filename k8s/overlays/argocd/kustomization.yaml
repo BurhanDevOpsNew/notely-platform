@@ -14,7 +14,7 @@ configMapGenerator:
 images:
   - name: notely
     newName: ghcr.io/burhandevopsnew/notely-platform
-    newTag: sha-baab513de3623185ce846bd454ac4a2b7c497dea
+    newTag: sha-19072c2ed121441674c413a79ab8cfa49ee1a3a3
 
 replicas:
   - name: notely
