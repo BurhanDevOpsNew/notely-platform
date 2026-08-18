@@ -626,6 +626,44 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     Produktion. `selfHeal` nimmt dir Notfall-Eingriffe per `kubectl` weg — der Weg führt ab
     jetzt über Git, oder man schaltet die Automatik bewusst kurz ab.
 
+20. **CI schreibt den sha-Tag nach Git** (Etappe 21, Branch `feature/ci-writes-tag`) — zwei
+    Steps am Ende des Jobs `image`, beide mit `if: github.event_name == 'push'`: ein `sed`
+    setzt `newTag` im prod-Overlay auf `sha-$GITHUB_SHA`, dann committet der Bot
+    (`github-actions[bot]`) und pusht.
+
+    **Die wichtigste Zeile ist `[skip ci]` in der Commit-Nachricht.** Ohne sie entsteht eine
+    **Endlosschleife**: Push → CI läuft → CI pusht → das ist ein Push → CI läuft → …
+    GitHub erkennt `[skip ci]`, `[ci skip]` und `[no ci]` im Betreff und startet dann keinen
+    Workflow. **Jede CI, die nach Git schreibt, braucht so eine Bremse.**
+
+    **`contents: write` nur im Job `image`.** Global bleibt `contents: read`; der Job-Block
+    überschreibt es nur dort, wo wirklich gepusht wird. `quality` bekommt keine
+    Schreibrechte. Ohne `write` scheitert `git push` mit `403`.
+
+    **`git push origin HEAD:main`** — `actions/checkout` hinterlässt einen *detached HEAD*
+    (ein Commit, kein Branch). Ein nacktes `git push` wüsste nicht, wohin.
+
+    **`if git diff --cached --quiet; then … else … fi` statt `&&`-Kette.** `--quiet` liefert
+    Exit-Code 1, *wenn* es Unterschiede gibt. GitHub führt `run:`-Blöcke mit `bash -e` aus —
+    in einer `&&`-Kette würde der Step dadurch fehlschlagen, obwohl alles in Ordnung ist.
+    Innerhalb von `if` löst ein Exit-Code ≠ 0 kein `-e` aus.
+    **Fehlerklasse: `set -e` und erwartete Fehlschläge.**
+
+    **Warum `sed` und nicht `yq`:** `yq` liegt auf den GitHub-Runnern, aber nicht auf diesem
+    Rechner — der Ausdruck wäre ungetestet in die CI gegangen. `sed -E "s|^( *newTag: ).*|…|"`
+    ließ sich lokal prüfen, und `newTag` kommt im prod-Overlay genau **einmal** vor.
+    **Lieber ein Werkzeug, das man vorher testen kann.**
+
+    **Nebenbefund beim Testen:** `GITHUB_SHA=x sed "…${GITHUB_SHA}…"` funktioniert **nicht**.
+    Die Zuweisung vor dem Befehl setzt die Variable für `sed`, aber `${…}` in doppelten
+    Anführungszeichen ersetzt die **Shell vorher** — und die kennt sie da noch nicht. In der
+    CI ist `GITHUB_SHA` eine echte Umgebungsvariable, dort greift es.
+
+    **Ehrliche Grenze:** ArgoCD überwacht `k8s/overlays/argocd`, **nicht** `prod`. Dieser
+    Commit löst also noch kein Deployment aus — gebaut ist der Mechanismus, nicht die
+    geschlossene Schleife. Dafür müsste ArgoCD auf `prod` zeigen, und das Image aus GHCR
+    müsste für den kind-Cluster ziehbar sein.
+
 ## Wo wir gerade stehen
 `main` = `4afc89f` (Merge PR #29), Arbeitsverzeichnis sauber, Etappe 19 fertig.
 ArgoCD: `main -> Synced / Healthy`, 16 verglichene Objekte, Job als PreSync-Hook nicht mehr
@@ -651,6 +689,8 @@ in der Vergleichsliste. Nächster Schritt: **automatischer Sync + selfHeal**.
 
 ## Danach geplant
 - **KSOPS im ArgoCD-Repo-Server** — dann fließen auch die Secrets über Git.
+- **Die Schleife wirklich schließen** — ArgoCD auf ein Overlay zeigen lassen, dessen Image
+  aus GHCR kommt und dessen `newTag` die CI schreibt. Dann deployt ein Merge von selbst.
 - Echte Secret-Verwaltung: SOPS / Sealed Secrets / External Secrets Operator.
   (Aktuell steht das Postgres-Passwort im Klartext im Git — bewusst, nur für die lokale
   Wegwerf-DB, und Burhan weiß, dass das sonst nicht geht.)
