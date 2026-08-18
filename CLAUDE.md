@@ -706,6 +706,27 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     **`imagePullPolicy: IfNotPresent` passt jetzt genau:** ein sha-Tag ist unveränderlich,
     also darf der Cluster ihn cachen. Bei einem wandernden `latest` wäre `Always` nötig.
 
+    **Der Fehler, der die Schleife beim ersten Versuch blockierte — Architektur-Mismatch.**
+    Der PreSync-Hook blieb in `ImagePullBackOff` stehen, ArgoCD hing bei
+    `waiting for completion of hook batch/Job/notely-migrate`. Meldung des kubelet:
+    `no match for platform in manifest: not found` — **kein** Rechteproblem.
+    Gemessen am Manifest: GHCR enthielt nur `linux/amd64`, Mac und kind-Knoten sind `arm64`.
+    Grund: bisher wurde lokal mit Podman auf arm64 gebaut und per `kind load` geschoben;
+    der GitHub-Runner ist amd64, und `build-push-action` baut standardmäßig nur für die
+    eigene Architektur. **Ein Image ist immer für *eine* Architektur; ein Tag kann auf eine
+    Manifest-Liste mit mehreren zeigen.**
+
+    Fix: `docker/setup-qemu-action@v3` vor dem Buildx-Setup und
+    `platforms: linux/amd64,linux/arm64` **nur** im Push-Build. Der Scan-Build behält
+    `load: true` ohne `platforms` — ein Multi-Plattform-Image lässt sich nicht in den
+    lokalen Daemon laden. Trivy scannt damit die amd64-Variante; vertretbar, weil beide
+    dieselben Paketversionen enthalten, aber eine bewusste Vereinfachung.
+    Kosten: arm64 läuft unter Emulation, der Job `image` dauert deutlich länger.
+
+    **Beruhigender Nebenbefund:** Während der Hook hing, liefen die alten Pods weiter und
+    ArgoCD meldete `Healthy`. **Ein blockierter PreSync-Hook verhindert die neue Version,
+    reißt aber die laufende nicht mit.**
+
 ## Wo wir gerade stehen
 `main` = `a23b24d` (Bot-Commit nach PR #32), Arbeitsverzeichnis sauber,
 Etappe 21 fertig. ArgoCD: `main -> Synced / Healthy`, automatischer Sync + selfHeal aktiv. Offene Punkte

@@ -65,6 +65,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -128,6 +131,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -135,13 +139,11 @@ jobs:
             APP_VERSION=${{ github.sha }}
           cache-from: type=gha
 
-      - name: Pin the overlays to this image
+      - name: Pin the prod overlay to this image
         if: github.event_name == 'push'
         run: |
-          for f in k8s/overlays/prod/kustomization.yaml k8s/overlays/argocd/kustomization.yaml; do
-            sed -i -E "s|^( *newTag: ).*|\1sha-${GITHUB_SHA}|" "$f"
-          done
-          git --no-pager diff -- k8s/overlays/
+          sed -i -E "s|^( *newTag: ).*|\1sha-${GITHUB_SHA}|" k8s/overlays/prod/kustomization.yaml
+          git --no-pager diff -- k8s/overlays/prod/kustomization.yaml
 
       - name: Commit the pinned tag
         if: github.event_name == 'push'
