@@ -89,7 +89,7 @@ k8s/overlays/   local/ und prod/: kustomization.yaml + *.enc.env (SOPS-verschlü
 Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
 ```
 
-## Was schon fertig ist (in `main`, PR #23 = `d2acd8f`)
+## Was schon fertig ist (in `main`, PR #25 = `db48942`)
 1. **API + Tests** — `/healthz`, `/readyz`, CRUD `/notes`, `APP_VERSION` aus Env. 7 pytest-Tests, ruff sauber.
 2. **Container** — Multi-Stage Dockerfile, `python:3.12-slim`, non-root uid 10001,
    `ARG/ENV APP_VERSION` ganz unten (Layer-Cache), exec-form CMD, `--host 0.0.0.0`.
@@ -533,8 +533,8 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     Ausgabe eigentlich zeigt.
 
 ## Wo wir gerade stehen
-`main` = `d2acd8f` (Merge PR #23), Etappe 15 fertig (SOPS + CVE-Fix im Basis-Image).
-Auf Branch `feature/scheduled-scan`: Etappe 16 (geplanter Scan) fertig, noch nicht gemergt.
+`main` = `db48942` (Merge PR #25), Arbeitsverzeichnis sauber, Etappe 17 fertig.
+Nächster Schritt: **GitOps mit ArgoCD** (siehe „Danach geplant").
 
 ## 🔴 Offene Punkte
 1. **Job und Deployment werden gleichzeitig angewendet.** `kubectl apply -k` kennt keine
