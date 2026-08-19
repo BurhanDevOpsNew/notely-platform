@@ -68,12 +68,35 @@ schreibt das Feld `operation` in das Application-Objekt, dasselbe geht per `kube
 
 | | Overlay | Image | Geheimnisse |
 |---|---|---|---|
-| **GitOps** (ArgoCD) | `k8s/overlays/argocd` | aus GHCR, `sha-<commit>` | einmalig von Hand angelegt |
+| **GitOps** (ArgoCD) | `k8s/overlays/argocd` | aus GHCR, `sha-<commit>` | SOPS-verschlüsselt in Git, KSOPS entschlüsselt im repo-server |
 | **Hand-Pfad** (lokal) | `k8s/overlays/local` | lokal gebaut, `kind load` | `sops -d` vor jedem `apply` |
+
+**Ein Secret ändern** geht seit KSOPS über Git — kein `kubectl` mehr:
+
+```bash
+sops set k8s/overlays/argocd/notely-db.enc.yaml '["stringData"]["DATABASE_URL"]' '"<neuer Wert>"'
+# Kontrolle: Inhalt prüfen, nicht nur die Verschlüsselung
+sops -d k8s/overlays/argocd/notely-db.enc.yaml | grep DATABASE_URL
+```
+
+Dann Branch, PR, Merge — ArgoCD wendet das Secret beim nächsten Sync an. Achtung, gilt
+erst ab dem **nächsten Pod-Start**: `envFrom` liest Secrets nur beim Container-Start.
+Und wenn der PreSync-Hook selbst vom geänderten Secret abhängt (z. B. `DATABASE_URL`),
+liest er noch den **alten** Cluster-Stand — die Sync-Phase, die ihn reparieren würde,
+kommt erst nach dem Hook. In dem Fall das Cluster-Secret nach dem Merge einmal von Hand
+patchen; `selfHeal` behält es, weil es dem neuen Git-Stand entspricht.
+
+Das lokale `kustomize build` des ArgoCD-Overlays braucht die eigenständige
+kustomize-Binary — das in kubectl eingebaute kann keine exec-Plugins:
+
+```bash
+kustomize build --enable-alpha-plugins --enable-exec k8s/overlays/argocd
+```
 
 ## Lokal starten (Hand-Pfad, ohne ArgoCD)
 
-Voraussetzungen: Podman, kind, kubectl, Python 3.12, `sops` und `age`.
+Voraussetzungen: Podman, kind, kubectl, Python 3.12, `sops` und `age`. Wer das
+ArgoCD-Overlay lokal rendern will, braucht zusätzlich `kustomize` und `ksops` (brew).
 
 Die Geheimnisse liegen mit [SOPS](https://github.com/getsops/sops) verschlüsselt im
 Repository (`*.enc.env`). Zum Entschlüsseln braucht man den privaten age-Schlüssel — ohne
@@ -218,12 +241,19 @@ zugleich: Hooks werden nicht mit Git verglichen, `PreSync` läuft **vor** dem Re
 wartet (das ist die Reihenfolge-Garantie, die `kubectl apply` nie geben konnte), und
 `hook-delete-policy: BeforeHookCreation` umgeht die unveränderliche Job-`spec`.
 
-**ArgoCD hat ein eigenes Overlay ohne `secretGenerator`.** ArgoCD führt `kustomize build`
-aus und kann kein SOPS. Das `local`-Overlay verlangt eine entschlüsselte Datei, die
-absichtlich nicht im Repository liegt — ArgoCD scheiterte an „file not found". Die beiden
-Secrets sind deshalb einmalig von Hand angelegt. Das ist das **„secret zero"**-Problem:
-irgendein erstes Geheimnis muss immer von außen kommen. Mit KSOPS wäre es nur verschoben,
-dann wäre der age-Schlüssel das erste Geheimnis. Verschieben ja, abschaffen nein.
+**Der repo-server entschlüsselt selbst: KSOPS als kustomize-exec-Plugin.** Kustomize kann
+von Haus aus kein SOPS; im ArgoCD-Overlay erzeugt deshalb ein ksops-Generator
+(`secret-generator.yaml`, ein KRM-exec-Plugin) die Secrets aus verschlüsselten
+Manifesten (`*.enc.yaml`). Dafür trägt `argocd-cm` die `kustomize.buildOptions`
+`--enable-alpha-plugins --enable-exec`, und der repo-server ist gepatcht
+(`k8s/argocd/repo-server-ksops-patch.yaml`): zwei initContainer legen die ksops-Binary
+in ein geteiltes `emptyDir` (busybox **musl** — statisch gelinkt, das ksops-Image hat
+keine Shell), ein `subPath`-Mount hängt sie in den `PATH`, und `SOPS_AGE_KEY_FILE`
+zeigt auf das Secret `sops-age`. Das ist das **„secret zero"**-Problem in seiner
+verschobenen Form: der private age-Schlüssel ist jetzt das erste Geheimnis und liegt —
+einmalig von Hand angelegt — im Cluster. Verschieben ja, abschaffen nein. Und
+`--enable-exec` ist eine Vertrauensentscheidung: Wer ins Repository schreiben darf,
+kann über eine Generator-Datei Code im repo-server ausführen.
 
 **Das Image wird für amd64 und arm64 gebaut.** Der GitHub-Runner ist amd64, der lokale
 kind-Cluster läuft auf Apple Silicon. Ein amd64-Image endet dort in
@@ -240,8 +270,9 @@ der Tag, an dem GHCRs Drosselung zuschlug.
 **Geheimnisse liegen verschlüsselt im Repository, nicht daneben.** SOPS verschlüsselt die
 **Werte**, nicht die Datei: `POSTGRES_PASSWORD=ENC[AES256_GCM,...]`. Ein Diff im Pull
 Request zeigt also, *welches* Geheimnis sich geändert hat, ohne es zu verraten. Gewählt
-wurde SOPS mit age statt Sealed Secrets, weil der Schlüssel eine sichtbare Datei auf dem
-Rechner bleibt und nichts im Cluster liegen muss.
+wurde SOPS mit age statt Sealed Secrets, weil der Schlüssel eine sichtbare, sicherbare
+Datei bleibt. Seit KSOPS liegt eine Kopie des privaten Schlüssels zusätzlich als Secret
+im Cluster — der Preis dafür, dass der repo-server selbst entschlüsselt.
 
 ## Bekannte Grenzen
 
@@ -250,17 +281,21 @@ Rechner bleibt und nichts im Cluster liegen muss.
   Wegwerf-Passwort ist das hinnehmbar. Bei einem echten Geheimnis ist die einzige richtige
   Antwort **rotieren** — Historie umschreiben hilft nur scheinbar, weil Klone und Forks die
   alten Commits behalten.
-- Kustomize kann kein SOPS. Im Hand-Pfad ist vor jedem `apply` ein manueller
-  `sops -d`-Schritt nötig; im GitOps-Pfad umgangen durch ein Overlay ohne `secretGenerator`
-  plus zwei einmalig von Hand angelegte Secrets. Richtige Lösung: KSOPS im
-  ArgoCD-Repo-Server — dann müsste allerdings der private age-Schlüssel im Cluster liegen.
+- Im GitOps-Pfad entschlüsselt KSOPS; der private age-Schlüssel liegt dafür als Secret
+  im Cluster (`sops-age`, Namespace `argocd`) — von Hand angelegt, wie der
+  repo-server-Patch selbst. Im Hand-Pfad bleibt vor jedem `apply` der manuelle
+  `sops -d`-Schritt. `kubectl apply -k k8s/overlays/argocd` funktioniert nicht mehr:
+  das in kubectl eingebaute kustomize kann keine exec-Plugins.
+- Secret-Änderungen wirken erst beim nächsten Pod-Start (`envFrom`), und ein
+  PreSync-Hook liest immer den Cluster-Stand **vor** dem Sync — hängt der Hook vom
+  geänderten Secret ab, braucht es einmalig einen Hand-Patch nach dem Merge.
 - `k8s/overlays/prod` ist strukturell vollständig, wird aber nirgends deployt: der
   Datenbank-Host ist ein Platzhalter.
 - Die Reihenfolge Migration → Deployment ist **nur im GitOps-Pfad** garantiert (PreSync-Hook).
   Wer `kubectl apply -k` benutzt, braucht davor `kubectl delete job notely-migrate
   --ignore-not-found` und hat keine Garantie. Unkritisch, weil `/readyz` nur `SELECT 1` prüft.
-- **Jeder Merge nach `main` deployt** — auch einer, der nur Dokumentation ändert. Ein
-  `paths-ignore` im Workflow wäre das Mittel dagegen.
+- ~~Jeder Merge nach `main` deployt~~ — seit `paths-ignore` (`**.md`, `docs/**`) lösen
+  reine Doku-Merges keinen Build und kein Deployment mehr aus.
 - Generierte ConfigMaps und Secrets sammeln sich an: jeder neue Inhalts-Hash erzeugt ein
   neues Objekt, das alte bleibt liegen. `prune` räumt sie nicht, weil ArgoCD nur löscht, was
   es selbst verwaltet hat. Aufräumen ist bisher Handarbeit.
