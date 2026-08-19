@@ -1,0 +1,34 @@
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: install-busybox
+          image: busybox:1.37-musl
+          command: ["cp", "/bin/busybox", "/custom-tools/busybox"]
+          volumeMounts:
+            - name: custom-tools
+              mountPath: /custom-tools
+        - name: install-ksops
+          image: viaductoss/ksops:v4.5.1
+          command: ["/custom-tools/busybox", "cp", "/usr/local/bin/ksops", "/custom-tools/ksops"]
+          volumeMounts:
+            - name: custom-tools
+              mountPath: /custom-tools
+      containers:
+        - name: argocd-repo-server
+          env:
+            - name: SOPS_AGE_KEY_FILE
+              value: /sops-age/keys.txt
+          volumeMounts:
+            - name: custom-tools
+              mountPath: /usr/local/bin/ksops
+              subPath: ksops
+            - name: sops-age
+              mountPath: /sops-age
+              readOnly: true
+      volumes:
+        - name: custom-tools
+          emptyDir: {}
+        - name: sops-age
+          secret:
+            secretName: sops-age
