@@ -886,9 +886,44 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     — `Synced` heißt „Cluster = letzter Git-Stand, den ArgoCD kennt", nicht „mein
     Feature ist deployed".
 
+25. **Ausfall-Übung: falscher age-Schlüssel im repo-server** (Etappe 26, Übung — keine
+    Code-Änderung) — das `sops-age`-Secret wurde durch einen frisch erzeugten, falschen
+    Schlüssel ersetzt (Upsert-Muster: `kubectl create … --dry-run=client -o yaml |
+    kubectl apply -f -`), Hard-Refresh, beobachten, reparieren.
+
+    **Drei Vorhersagen, alle bestätigt:**
+    1. Die laufende App blieb unberührt — `/readyz` ready, Pods `Running`. **Ein
+       Rendering-Fehler blockiert Neues, tötet nichts Laufendes.**
+    2. Status wurde **`Unknown` + `ComparisonError`, nicht `OutOfSync`**. `OutOfSync`
+       heißt „ich sehe eine Differenz", `Unknown` heißt „ich kann nicht mehr
+       vergleichen". `Healthy` blieb daneben stehen — Health bewertet die *laufenden*
+       Objekte, nicht das Rendern.
+    3. Der Secret-Mount aktualisierte sich **ohne Pod-Neustart** (kubelet zieht
+       Verzeichnis-Mounts in ~1 min nach). Kontrast: der ksops-Binary-Mount ist
+       `subPath` — **subPath-Mounts aktualisieren sich nie.**
+
+    **Die Fehlermeldung war ein Lehrstück in Schichten**, von außen nach innen:
+    ArgoCD (`Failed to load target state`) → repo-server (zeigt den echten Befehl samt
+    buildOptions) → kustomize (`failed to evaluate function`) → ksops (`error
+    decrypting file`) → sops (`0 successful groups required, got 0` = keine
+    Schlüsselgruppe konnte den Datenschlüssel entschlüsseln).
+
+    **Die Race, die eine Runde kostete:** Refresh lief, *bevor* das kubelet den
+    reparierten Mount nachgezogen hatte — der repo-server renderte mit dem alten
+    Schlüssel, das Ergebnis blieb im Cache stehen. Reihenfolge bei Secret-Reparaturen:
+    Secret ersetzen → ~90 s warten → Refresh. Kontrolle über drei `shasum`-Vergleiche:
+    Cluster-Secret vs. lokale Datei vs. `kubectl exec … cat` im Pod — so sieht man,
+    *welches* Glied der Kette hinterherhinkt.
+
+    **Der unbequeme Befund: dieser Ausfall ist lautlos.** Kein Alarm feuert — die
+    Prometheus-Regeln schauen auf die App, niemand schaut auf ArgoCD. Ein kaputtes
+    Deployment-System fällt erst auf, wenn ein Merge nicht ankommt. ArgoCD exportiert
+    eigene Metriken (`argocd_app_info` mit `sync_status`-Label) — ArgoCD in die
+    Scrape-Config aufnehmen und eine Regel darauf bauen wäre die passende Folge-Etappe.
+
 ## Wo wir gerade stehen
-`main` = `bd1c159` (Bot-Pin auf `sha-e833b4f…` nach Merge PR #42). Arbeitsverzeichnis
-sauber, keine offenen Branches. ArgoCD: `Synced / Healthy`. Secrets laufen über KSOPS;
+`main` = `ab2d8eb` (Doku-Merge PR #43 — deployt nicht, `paths-ignore`). Arbeitsverzeichnis
+sauber, keine offenen Branches. Laufendes Image: `sha-e833b4f…`. ArgoCD: `Synced / Healthy`. Secrets laufen über KSOPS;
 `notely-db` und `postgres-credentials` tragen die ArgoCD-`tracking-id`.
 
 **Die GitOps-Schleife ist geschlossen:** Merge → CI baut, scannt und pusht multi-arch →
@@ -898,7 +933,8 @@ App rollt aus. Kein Deploy-Befehl mehr von Hand — auch Secrets nicht mehr (Eta
 **`paths-ignore` ist bewiesen:** Ein Doku-Merge (nur `.md`/`docs/`) bewegt `main`,
 startet aber keinen Workflow — `newTag` und laufendes Image bleiben unverändert.
 
-Nächster Schritt: Image-Diät (offener Punkt 3) oder eine weitere Ausfall-Übung.
+Nächster Schritt: Image-Diät (offener Punkt 3) oder ArgoCD-Monitoring (Etappe-26-Befund:
+Sync-Ausfälle sind lautlos — `argocd_app_info` scrapen, Regel auf `sync_status`).
 Beim Start den echten Zustand gegen diese Notiz prüfen:
 `git fetch && git log --oneline -2 origin/main`, `git branch -vv`,
 `kubectl get application -n argocd`, laufendes Image über
