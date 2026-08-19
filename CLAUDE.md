@@ -805,22 +805,103 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     braucht — ohne sie kommt man nicht zurück, ohne die Datenbank von Hand anzufassen.
     `-1` ist relativ („einen Schritt zurück"), alternativ eine Revisions-ID absolut.
 
+24. **KSOPS: Secrets fließen über Git** (Etappe 25, Branches `feature/ksops` +
+    `fix/argocd-database-url`) — der argocd-repo-server entschlüsselt SOPS-Secrets jetzt
+    selbst. Bauteile: `.sops.yaml`-Regel für `\.enc\.yaml$` mit
+    `encrypted_regex: ^(data|stringData)$` (nur Werte verschlüsseln, Struktur lesbar —
+    sonst erkennt ksops kein Secret); zwei verschlüsselte Secret-Manifeste +
+    `secret-generator.yaml` (KRM-exec-Plugin, `config.kubernetes.io/function`) in
+    `k8s/overlays/argocd/`; `generators:` in der Overlay-Kustomization;
+    `kustomize.buildOptions: --enable-alpha-plugins --enable-exec` in `argocd-cm`;
+    age-Schlüssel als Secret `sops-age` im Namespace `argocd`; repo-server-Patch in
+    `k8s/argocd/repo-server-ksops-patch.yaml` (per `kubectl patch --patch-file`
+    angewendet — strategic merge, mischt Listen über `name:`).
+
+    **Der Patch enthält ein Muster zum Merken — zwei initContainer, ein `emptyDir`:**
+    Das ksops-Image ist quasi distroless (keine Shell, kein `cp` — vorher geprüft per
+    `podman export | tar -t`). Die offizielle Anleitung mit `/bin/sh` läuft dagegen —
+    **Fehlerklasse: Anleitung passt nicht mehr zur Version.** Lösung: initContainer 1
+    (busybox) kopiert sich selbst ins Volume, initContainer 2 (ksops-Image) benutzt
+    dieses busybox als `cp`. initContainer laufen nacheinander, das Volume überlebt.
+    Die ksops-Binary landet per `subPath`-Mount als einzelne Datei in
+    `/usr/local/bin/` — ohne das Verzeichnis (ArgoCDs eigenes kustomize!) zu überdecken.
+
+    **Der beste Fehler der Etappe:** `exec /custom-tools/busybox: no such file or
+    directory` — obwohl die Datei da war (cp: exit 0). `busybox:1.37` ist **dynamisch
+    gelinkt**; der Kernel suchte den in der Binary eingetragenen Loader
+    `/lib/ld-linux-aarch64.so.1`, den es im ksops-Image nicht gibt. Das ENOENT meint den
+    Interpreter, die Meldung nennt die Binary. Fix: `busybox:1.37-musl` (statisch).
+    Nachweis: `ls /lib` + `grep -c ld-linux /bin/busybox` in beiden Varianten (1 vs. 0).
+    **Fehlerklasse: dynamisch gelinkte Binary in fremde Umgebung verschoben. Merksatz:
+    „no such file or directory" bei nachweislich existierender Datei = fehlender
+    ELF-Interpreter.**
+
+    **Der Incident: Platzhalter statt Wert.** In `notely-db.enc.yaml` stand ein von der
+    Editor-Autovervollständigung erfundener plausibler Wert
+    (`postgresql://notely:password@notely-db-postgresql:5432/notely` — Schema ohne
+    `+psycopg`, erfundener Host, falsches Passwort). Die Kontrolle `grep -c "ENC\["`
+    prüfte nur, **dass** verschlüsselt wurde, nicht **was**.
+    **Fehlerklasse: Verschlüsselung geprüft, Inhalt nicht.** Die Kontrolle, die ab jetzt
+    vor jedem Secret-Commit läuft:
+    ```
+    diff <(sops -d DATEI.enc.yaml | grep KEY | awk '{print $2}') <(grep '^KEY=' QUELLE.env | cut -d= -f2-)
+    ```
+    Die Wirkungskette war lehrreich: Der Adoptions-Sync war **grün**, weil der
+    PreSync-Hook **vor** dem Anwenden lief (altes, korrektes Hand-Secret) und die
+    Sync-Phase das kaputte Secret erst danach schrieb. Die App blieb **Healthy**, weil
+    `envFrom` nur beim Container-Start gelesen wird — ein **latenter Ausfall**, der erst
+    beim nächsten Pod-Start gezündet hätte. Der Folge-Sync scheiterte dann im Hook
+    (`backoffLimit`), und `ttlSecondsAfterFinished` hatte Job samt Pods gelöscht —
+    **TTL gilt auch für gescheiterte Jobs und frisst Beweise**; Events waren nach 1 h
+    ebenfalls weg. Diagnose lief deshalb über den Ist-Wert:
+    `kubectl get secret … | base64 -d` gegen die lokale Quelldatei.
+
+    **Das Henne-Ei, das man kennen muss: der PreSync-Hook liest das Secret, das erst
+    die Sync-Phase reparieren würde.** Ein kaputtes Secret im Cluster blockiert damit
+    jeden künftigen Sync. Lösung: Git zuerst fixen (`sops set DATEI INDEX WERT` —
+    ändert einen Wert ohne Editor, Wert muss JSON sein), **nach dem Merge** das
+    Cluster-Secret von Hand patchen. Reihenfolge zwingend: `selfHeal` heilt in Richtung
+    Git — vor dem Merge hätte es den Hand-Patch auf den kaputten Git-Stand zurückgedreht.
+
+    **Bewiesen:** lokal und im repo-server rendert dasselbe
+    (`kustomize build --enable-alpha-plugins --enable-exec`); ArgoCD hat die
+    Hand-Secrets **adoptiert** (`argocd.argoproj.io/tracking-id` gesetzt, vorher
+    `<none>`); nach dem Fix-Merge Sync `Succeeded`, neue Pods starteten erstmals mit dem
+    ksops-gerenderten Secret und wurden ready (`/readyz` = `SELECT 1` gegen die DB).
+
+    **Ehrliche Grenzen:** (1) „Secret zero" ist umgezogen, nicht weg — der private
+    age-Schlüssel liegt als Secret im Cluster, von Hand angelegt. (2) `--enable-exec`
+    ist eine Vertrauensentscheidung: Repo-Schreibrecht = Code-Ausführung im repo-server.
+    (3) `kubectl apply -k k8s/overlays/argocd` geht nicht mehr — das in kubectl
+    eingebaute kustomize kann keine exec-Plugins; der Hand-Pfad bleibt `overlays/local`.
+    (4) Der repo-server-Patch ist Bootstrap wie `application.yaml`: dokumentiert, aber
+    nicht selbstverwaltend.
+
+    **Kleinigkeiten, die Zeit kosteten:** `kubectl exec deploy/…` wählt während eines
+    Rollouts irgendeinen Pod — auch den alten (die Zeile `Defaulted container … out of:`
+    verrät am initContainer-Satz, welcher es war). `sops -d` in nicht-interaktiver Shell
+    scheitert, weil `~/.zshrc` (`SOPS_AGE_KEY_FILE`) nur interaktive Shells erreicht —
+    sops probiert dann `~/.ssh/id_rsa` als age-Identität und meldet „identity did not
+    match". Und zweimal zu früh geprüft: **erst `origin/main` fragen, dann den Cluster**
+    — `Synced` heißt „Cluster = letzter Git-Stand, den ArgoCD kennt", nicht „mein
+    Feature ist deployed".
+
 ## Wo wir gerade stehen
-`main` = `1f56c30` (Merge PR #39). Arbeitsverzeichnis sauber, keine offenen Branches.
-ArgoCD: `Synced / Healthy`. Laufendes Image
-`ghcr.io/burhandevopsnew/notely-platform:sha-f4e2537…`.
+`main` = `bd1c159` (Bot-Pin auf `sha-e833b4f…` nach Merge PR #42). Arbeitsverzeichnis
+sauber, keine offenen Branches. ArgoCD: `Synced / Healthy`. Secrets laufen über KSOPS;
+`notely-db` und `postgres-credentials` tragen die ArgoCD-`tracking-id`.
 
 **Die GitOps-Schleife ist geschlossen:** Merge → CI baut, scannt und pusht multi-arch →
 CI pinnt den sha in prod- und argocd-Overlay → ArgoCD synct → PreSync-Hook migriert →
-App rollt aus. Kein Deploy-Befehl mehr von Hand.
+App rollt aus. Kein Deploy-Befehl mehr von Hand — auch Secrets nicht mehr (Etappe 25).
 
-**`paths-ignore` ist bewiesen:** Der Doku-Merge zu `1f56c30` hat `main` bewegt, aber keinen
-Workflow gestartet — `newTag` im Overlay und das laufende Image blieben unverändert auf
-`sha-f4e2537…`. Ein Doku-Merge deployt also nicht mehr.
+**`paths-ignore` ist bewiesen:** Ein Doku-Merge (nur `.md`/`docs/`) bewegt `main`,
+startet aber keinen Workflow — `newTag` und laufendes Image bleiben unverändert.
 
-Nächster Schritt: einer der zwei Punkte unter „Danach geplant" (KSOPS oder Image-Diät) —
-oder eine weitere Ausfall-Übung. Beim Start den echten Zustand gegen diese Notiz prüfen:
-`git branch -vv`, `kubectl get application -n argocd`, laufendes Image über
+Nächster Schritt: Image-Diät (offener Punkt 3) oder eine weitere Ausfall-Übung.
+Beim Start den echten Zustand gegen diese Notiz prüfen:
+`git fetch && git log --oneline -2 origin/main`, `git branch -vv`,
+`kubectl get application -n argocd`, laufendes Image über
 `kubectl get pods -l app=notely -o jsonpath='{.items[0].spec.containers[0].image}'`.
 
 ## 🔴 Offene Punkte
@@ -828,20 +909,18 @@ oder eine weitere Ausfall-Übung. Beim Start den echten Zustand gegen diese Noti
    das gelöst (`PreSync`-Hook, siehe Punkt 18). Wer weiterhin `kubectl apply -k` benutzt,
    braucht davor `kubectl delete job notely-migrate --ignore-not-found` und hat keine
    Garantie, dass die Migration vor den App-Pods fertig ist.
-2. **Kustomize kann kein SOPS.** Im Hand-Pfad sind vor jedem `apply` die zwei
-   `sops -d`-Befehle nötig (siehe README). Im ArgoCD-Pfad umgangen durch ein Overlay ohne
-   `secretGenerator` plus einmalig von Hand angelegte Secrets. Richtige Lösung: KSOPS-Plugin
-   im ArgoCD-Repo-Server — dann muss der private age-Schlüssel als Secret in den Cluster.
+2. **Erledigt durch KSOPS (Etappe 25, Punkt 24).** Nur der Hand-Pfad (`overlays/local`)
+   braucht weiterhin `sops -d` vor dem `apply`. Neue Restpunkte: der private age-Schlüssel
+   liegt als `sops-age`-Secret im Cluster (secret zero, von Hand angelegt), und
+   `--enable-exec` koppelt Repo-Schreibrecht an Code-Ausführung im repo-server.
 3. **Image-Diät**, kein Blocker: die 90,5 MB des venv enthalten `pip`, `setuptools` und
    `.pyc`-Dateien, die zur Laufzeit niemand braucht. `pip install --no-compile` plus
    `pip uninstall -y pip setuptools` im Builder holen ~25 MB.
 
 ## Danach geplant
-- **KSOPS im ArgoCD-Repo-Server** — dann fließen auch die Secrets über Git.
 - Echte Secret-Verwaltung: SOPS / Sealed Secrets / External Secrets Operator.
-  (Aktuell steht das Postgres-Passwort im Klartext im Git — bewusst, nur für die lokale
-  Wegwerf-DB, und Burhan weiß, dass das sonst nicht geht.)
-- GitOps: CI trägt den `sha`-Tag ins prod-Overlay ein.
+  (Aktuell steht das Postgres-Passwort im Klartext in der Git-Historie — bewusst, nur
+  für die lokale Wegwerf-DB; bei einem echten Geheimnis wäre Rotieren die Antwort.)
 
 ## Sprache im Repo
 - **Kommentare und Docstrings: Deutsch.** Gilt auch für generierte Dateien, sobald wir sie
