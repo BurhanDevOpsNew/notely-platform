@@ -4,7 +4,7 @@ metadata:
     name: notely-db
 type: Opaque
 stringData:
-    DATABASE_URL: ENC[AES256_GCM,data:QHXPKUgFdNLZno4MvkGe3dzHI2m9I83VmL+xE01syDOJm1ATaO2svoTFR0qUSHL8HBWMIsWOz13TxAIOpg==,iv:mJBKotbaxb5Gr7p7cwpcdfWVvu6FKzsGlkZqnAg02uQ=,tag:PcVIH37m+MaMvRGfntULiA==,type:str]
+    DATABASE_URL: ENC[AES256_GCM,data:rXtwqPvtvU8xdPPQYfwj0LfH2jC894F6KtkOpecQOKzfZDmzHR3ULiydFCbB8J7lMZV162X1TAKz0qIxdnF9Kkm9Gwu8,iv:0voVOkQKQAd7VLaJsf4xsdW0F7IpwVXkQpb1OsFgsYI=,tag:sAlBxsrgrqvsiazO8WYQ9g==,type:str]
 sops:
     age:
         - enc: |
@@ -17,6 +17,6 @@ sops:
             -----END AGE ENCRYPTED FILE-----
           recipient: age1dgyn3u9la08nmgram3327wetqspnwwk4xsrk5kdywecs9jjlzujsf9hrp7
     encrypted_regex: ^(data|stringData)$
-    lastmodified: "2026-08-19T07:13:21Z"
-    mac: ENC[AES256_GCM,data:mC49lU5W+EDFgFcCOj7jwK5d261goVI3GdQDU463iH5gFIDs4i9u2lFiN+k4GDLY9r/ZxdMqG8EEtP9BKgp1uKnJvF3gSxQSZBU3mEDhc3dYB1hvLTeRS66iJrUUA4BLMANYjOnb31azr6bEKOpI0V5idNRi1hfhc+91RT2fz5I=,iv:Nrdjo9nt8S60XfmxZTFOl7q2EvmjRN1kRbi+Prjq1wE=,tag:KcIDtINCHfZ5gOV41QFxKA==,type:str]
+    lastmodified: "2026-08-19T13:44:49Z"
+    mac: ENC[AES256_GCM,data:o9Wu/4I74Be6u5HNX/x/ZBwjhCnkGG3LHfQE4qXQwoEk+uESN99wV7bfMPI+07Xiu6UWeMKsGdxuiAgDmZl5nr1S1t8h9rA3wm1PVL6ZJXchwagMMRoRplbeG1YRcnhqCKwkLma2nIU2MtBwQBd6Zf8Y3R79/zbmmNOMbib0ITY=,iv:wsCyUiKpDMAD0MyzWLOEjgezAO3ujteXlnpLrHearA8=,tag:HscNnpKT+8WCykOIxFWd2A==,type:str]
     version: 3.13.3
