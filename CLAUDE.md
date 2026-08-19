@@ -921,9 +921,50 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     eigene Metriken (`argocd_app_info` mit `sync_status`-Label) — ArgoCD in die
     Scrape-Config aufnehmen und eine Regel darauf bauen wäre die passende Folge-Etappe.
 
+26. **ArgoCD-Monitoring: Sync-Ausfälle sind nicht mehr lautlos** (Etappe 27, Branch
+    `feature/argocd-monitoring`) — Konsequenz aus der Übung in Punkt 25. Zwei Dateien in
+    `k8s/monitoring/`: in `prometheus.yml` ein zweiter Scrape-Job (`static_configs` auf
+    `argocd-metrics.argocd.svc:8082`), in `alerts.yml` die Gruppe `argocd` mit
+    `ArgoCDMetricsDown` (`up{job="argocd"} == 0`, `for: 5m`) und `ArgoCDAppNotSynced`
+    (`argocd_app_info{sync_status!="Synced"} == 1`, `for: 15m`).
+
+    **Entscheidungen, die man begründen können muss:**
+    - `static_configs` statt Pod-Discovery: genau ein Controller unter festem
+      Service-Namen — und Annotationen an ArgoCDs StatefulSet wären ein weiterer
+      Hand-Eingriff außerhalb von Git. **Discovery für dynamische Flotten, statisch
+      für bekannte Einzelziele.**
+    - `<service>.<namespace>.svc` ist Pflicht: `alertmanager:9093` funktioniert nur,
+      weil Alertmanager im selben Namespace läuft. Über Namespace-Grenzen braucht der
+      DNS-Name den Namespace.
+    - Beim statischen Target bleibt die Zielzeile immer bestehen → `up == 0` genügt,
+      `absent()` ist unnötig — **die Etappe-17-Unterscheidung, umgekehrt angewandt.**
+    - `for: 15m` bei `ArgoCDAppNotSynced`: jeder normale Deploy geht kurz durch
+      `OutOfSync`; ohne Wartezeit feuerte der Alarm bei jedem Merge.
+
+    **Erste Monitoring-Änderung komplett über GitOps:** neuer ConfigMap-Hash →
+    Pod-Template geändert → Prometheus rollte nach dem Merge von selbst, noch vor dem
+    Pin-Commit. Kein einziger Hand-Befehl.
+
+    **Bewiesen durch Wiederholung der Ausfall-Übung:** falscher age-Schlüssel →
+    Application `Unknown` → `ArgoCDAppNotSynced` auf **`pending`** nach gut einer
+    Minute. Reparatur → Metrik `Synced` → nächster Evaluations-Tick → Alarmliste leer.
+    Der Alarm feuerte nie — `inactive → pending → inactive`, genau wofür `for:` da ist.
+
+    **Gemessene Alarm-Latenz, jetzt mit Begründung:** `scrape_interval: 15s` plus
+    `evaluation_interval` (nie gesetzt, **Standard 1 min**) ≈ bis zu 75 s zwischen
+    „Welt ist kaputt" und „Regel ist pending" — und dasselbe noch einmal beim
+    Entwarnen. Deshalb misst man Alarm-Latenz in Minuten.
+
+    **Zwei Kleinigkeiten:** `kubectl exec … wget` starb einmal mit exit 139
+    (= 128 + Signal 11, SIGSEGV) und riss den JSON-Strom ab — der Python-Traceback
+    darunter war nur die Folge. **Fehlerklasse: Folgefehler diagnostiziert statt
+    Ursache — die erste Fehlerzeile zählt, nicht die lauteste.** Und dreimal an einem
+    Tag zu früh geprüft: Kontrollen gegen den Cluster sind erst nach Merge + CI +
+    Sync aussagekräftig — **der Cluster kann Git nicht voraus sein.**
+
 ## Wo wir gerade stehen
-`main` = `ab2d8eb` (Doku-Merge PR #43 — deployt nicht, `paths-ignore`). Arbeitsverzeichnis
-sauber, keine offenen Branches. Laufendes Image: `sha-e833b4f…`. ArgoCD: `Synced / Healthy`. Secrets laufen über KSOPS;
+`main` = `8993c53` (Bot-Pin auf `sha-2f633a1…` nach Merge PR #45). Arbeitsverzeichnis
+sauber, keine offenen Branches. Prometheus überwacht jetzt auch ArgoCD (3 Targets, 6 Regeln). ArgoCD: `Synced / Healthy`. Secrets laufen über KSOPS;
 `notely-db` und `postgres-credentials` tragen die ArgoCD-`tracking-id`.
 
 **Die GitOps-Schleife ist geschlossen:** Merge → CI baut, scannt und pusht multi-arch →
@@ -933,8 +974,8 @@ App rollt aus. Kein Deploy-Befehl mehr von Hand — auch Secrets nicht mehr (Eta
 **`paths-ignore` ist bewiesen:** Ein Doku-Merge (nur `.md`/`docs/`) bewegt `main`,
 startet aber keinen Workflow — `newTag` und laufendes Image bleiben unverändert.
 
-Nächster Schritt: Image-Diät (offener Punkt 3) oder ArgoCD-Monitoring (Etappe-26-Befund:
-Sync-Ausfälle sind lautlos — `argocd_app_info` scrapen, Regel auf `sync_status`).
+Nächster Schritt: Image-Diät (offener Punkt 3, letzter offener Punkt) oder eine neue
+Ausfall-Übung.
 Beim Start den echten Zustand gegen diese Notiz prüfen:
 `git fetch && git log --oneline -2 origin/main`, `git branch -vv`,
 `kubectl get application -n argocd`, laufendes Image über
