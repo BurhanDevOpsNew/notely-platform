@@ -28,3 +28,7 @@ scrape_configs:
         target_label: pod
       - source_labels: [__meta_kubernetes_namespace]
         target_label: namespace
+
+  - job_name: argocd
+    static_configs:
+      - targets: [argocd-metrics.argocd.svc:8082]

@@ -40,3 +40,25 @@ groups:
           severity: warning
         annotations:
           summary: "p95 über 500 ms"
+
+  - name: argocd
+    rules:
+      # Statisches Target: die Reihe verschwindet nie aus der Zielliste,
+      # "== 0" genügt — anders als bei Service Discovery (vgl. NotelyNoTargets).
+      - alert: ArgoCDMetricsDown
+        expr: up{job="argocd"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          namespace: argocd
+        annotations:
+          summary: "ArgoCD liefert keine Metriken mehr"
+
+      # Greift auch bei "Unknown" (Rendering kaputt) — der Fall aus der Übung.
+      - alert: ArgoCDAppNotSynced
+        expr: argocd_app_info{sync_status!="Synced"} == 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Application {{ $labels.name }} ist {{ $labels.sync_status }} statt Synced"
