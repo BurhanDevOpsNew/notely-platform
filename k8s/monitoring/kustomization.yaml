@@ -6,6 +6,7 @@ resources:
   - deployment.yaml
   - service.yaml
   - alertmanager-deployment.yaml
+  - webhook-logger.yaml
 
 configMapGenerator:
   - name: prometheus-config

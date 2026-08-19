@@ -7,6 +7,9 @@ route:
 
 receivers:
   - name: default
+    webhook_configs:
+      - url: http://webhook-logger:9000/alerts
+        send_resolved: true
 
 inhibit_rules:
   - source_matchers: [severity="critical"]
