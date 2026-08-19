@@ -962,9 +962,40 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     Tag zu früh geprüft: Kontrollen gegen den Cluster sind erst nach Merge + CI +
     Sync aussagekräftig — **der Cluster kann Git nicht voraus sein.**
 
+27. **Image-Diät: −30 MB ohne Funktionsverlust** (Etappe 28, Branch `feature/image-diet`)
+    — eine `RUN`-Zeile im Builder geändert: `pip install --no-compile` (keine
+    `.pyc`-Dateien — reiner Startzeit-Cache, den `PYTHONDONTWRITEBYTECODE=1` zur
+    Laufzeit ohnehin nicht nachwachsen ließe) plus `pip uninstall -y pip setuptools`
+    in **derselben** Zeile (Schichten-Lektion aus Etappe 9; hier zusätzlich: `COPY
+    --from=builder` kopiert den Endzustand des venv). Seit Python 3.12 legt `venv`
+    nur noch pip an — das `uninstall setuptools` läuft als Warnung durch.
+
+    **Gemessen, mit Werkzeug und Einheit:**
+    | | vorher | nachher |
+    |---|---|---|
+    | Image (`podman images`, arm64, unkomprimiert) | 254 MB | **224 MB** |
+    | `/opt/venv` (`du -sh` im Container) | 95 MB | **64 MB** |
+    | auf dem kind-Node (`crictl images`, komprimiert) | 75,3 MB | **64,7 MB** |
+
+    **`pip uninstall` ist nebenbei eine Härtung:** in diesem Image kann nie wieder
+    etwas nachinstalliert werden. Funktionsbeweis vor dem Merge lokal per
+    `podman run -p 8001:8000` + `curl /healthz`; nach dem Merge lieferte die Schleife
+    unverändert automatisch aus (Pin `sha-ec9774b…`, `Synced / Healthy`, `/readyz` ready).
+
+    **Zwei Befunde am Node (`crictl images`):** (1) Dieselbe `SIZE`-Spalte trägt je
+    nach Ankunftsweg andere Bedeutung — per `kind load` importierte Images stehen
+    unkomprimiert drin, aus der Registry gezogene komprimiert. (2) Sieben alte
+    GHCR-Images liegen dort — unveränderliche Tags sammeln sich, kubelet räumt erst
+    bei Plattendruck (dieselbe Mechanik wie die ConfigMap-Waisen aus Etappe 23).
+
+    **Und einmal Automatik erklärt statt gesucht:** Nach dem Merge lief „noch eine CI"
+    — das ist der Push-Lauf auf `main`, den der Merge selbst auslöst; sein Pin-Commit
+    geht als Bot direkt auf `main`. **Nur menschliche Arbeit läuft über PRs.**
+
 ## Wo wir gerade stehen
-`main` = `8993c53` (Bot-Pin auf `sha-2f633a1…` nach Merge PR #45). Arbeitsverzeichnis
-sauber, keine offenen Branches. Prometheus überwacht jetzt auch ArgoCD (3 Targets, 6 Regeln). ArgoCD: `Synced / Healthy`. Secrets laufen über KSOPS;
+`main` = `0b5a4e2` (Bot-Pin auf `sha-ec9774b…` nach Merge PR #47). Arbeitsverzeichnis
+sauber, keine offenen Branches. Prometheus überwacht auch ArgoCD (3 Targets, 6 Regeln).
+Image: 224 MB unkomprimiert. **Alle drei offenen Punkte sind erledigt.** ArgoCD: `Synced / Healthy`. Secrets laufen über KSOPS;
 `notely-db` und `postgres-credentials` tragen die ArgoCD-`tracking-id`.
 
 **Die GitOps-Schleife ist geschlossen:** Merge → CI baut, scannt und pusht multi-arch →
@@ -974,8 +1005,8 @@ App rollt aus. Kein Deploy-Befehl mehr von Hand — auch Secrets nicht mehr (Eta
 **`paths-ignore` ist bewiesen:** Ein Doku-Merge (nur `.md`/`docs/`) bewegt `main`,
 startet aber keinen Workflow — `newTag` und laufendes Image bleiben unverändert.
 
-Nächster Schritt: Image-Diät (offener Punkt 3, letzter offener Punkt) oder eine neue
-Ausfall-Übung.
+Nächster Schritt: frei — Kandidaten: neue Ausfall-Übung, Prometheus auf PVC,
+Alertmanager-Receiver mit echter Zustellung, oder ein zweiter Service neben notely.
 Beim Start den echten Zustand gegen diese Notiz prüfen:
 `git fetch && git log --oneline -2 origin/main`, `git branch -vv`,
 `kubectl get application -n argocd`, laufendes Image über
@@ -990,9 +1021,8 @@ Beim Start den echten Zustand gegen diese Notiz prüfen:
    braucht weiterhin `sops -d` vor dem `apply`. Neue Restpunkte: der private age-Schlüssel
    liegt als `sops-age`-Secret im Cluster (secret zero, von Hand angelegt), und
    `--enable-exec` koppelt Repo-Schreibrecht an Code-Ausführung im repo-server.
-3. **Image-Diät**, kein Blocker: die 90,5 MB des venv enthalten `pip`, `setuptools` und
-   `.pyc`-Dateien, die zur Laufzeit niemand braucht. `pip install --no-compile` plus
-   `pip uninstall -y pip setuptools` im Builder holen ~25 MB.
+3. **Erledigt durch die Image-Diät (Etappe 28, Punkt 27):** −30 MB, venv 95 → 64 MB,
+   kein pip mehr im Laufzeit-Image.
 
 ## Danach geplant
 - Echte Secret-Verwaltung: SOPS / Sealed Secrets / External Secrets Operator.
