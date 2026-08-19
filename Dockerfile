@@ -7,7 +7,8 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 COPY requirements.txt .
 
 RUN python -m venv /opt/venv && \
-    /opt/venv/bin/pip install -r requirements.txt
+    /opt/venv/bin/pip install --no-compile -r requirements.txt && \
+    /opt/venv/bin/pip uninstall -y pip setuptools
 
 # ---------- Stage 2: Runtime ----------
 FROM python:3.12-slim
