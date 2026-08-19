@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: notely-db
+type: Opaque
+stringData:
+    DATABASE_URL: ENC[AES256_GCM,data:QHXPKUgFdNLZno4MvkGe3dzHI2m9I83VmL+xE01syDOJm1ATaO2svoTFR0qUSHL8HBWMIsWOz13TxAIOpg==,iv:mJBKotbaxb5Gr7p7cwpcdfWVvu6FKzsGlkZqnAg02uQ=,tag:PcVIH37m+MaMvRGfntULiA==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBBTjBJNWQrZGd0OFFndTlK
+            c3pOdTdIS1lLWXQwblNKV043b3hRRFRZV1NFCmo3RlluendOSnN3cnVQZGswNDk5
+            dmR5TlgvcXRVRTU5enU2a1h2WW9qWFEKLS0tIDkzUG1tZVNmTitkM0ExOWw0Y2VT
+            YUYzNWVUSzhQZWpoOUY0SUNhdGZMdFkK+LZLtEMKDSqDjpUokHAMteztjNSQLluo
+            aTWZx5AcZPnQmGXdX7d0vBiCriYxFei4sviWRLjFIkQUqdr2H5fdjw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1dgyn3u9la08nmgram3327wetqspnwwk4xsrk5kdywecs9jjlzujsf9hrp7
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-08-19T07:13:21Z"
+    mac: ENC[AES256_GCM,data:mC49lU5W+EDFgFcCOj7jwK5d261goVI3GdQDU463iH5gFIDs4i9u2lFiN+k4GDLY9r/ZxdMqG8EEtP9BKgp1uKnJvF3gSxQSZBU3mEDhc3dYB1hvLTeRS66iJrUUA4BLMANYjOnb31azr6bEKOpI0V5idNRi1hfhc+91RT2fz5I=,iv:Nrdjo9nt8S60XfmxZTFOl7q2EvmjRN1kRbi+Prjq1wE=,tag:KcIDtINCHfZ5gOV41QFxKA==,type:str]
+    version: 3.13.3
