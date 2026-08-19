@@ -11,6 +11,9 @@ configMapGenerator:
     literals:
       - APP_VERSION=gitops
 
+generators:
+  - secret-generator.yaml
+
 images:
   - name: notely
     newName: ghcr.io/burhandevopsnew/notely-platform
