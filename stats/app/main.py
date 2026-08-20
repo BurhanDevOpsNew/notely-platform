@@ -4,11 +4,14 @@ import os
 
 import httpx
 from fastapi import FastAPI, HTTPException
+from prometheus_client import make_asgi_app
 
 # In-Cluster-DNS: Service "notely", Port 80 -> kein Port im URL nötig.
 NOTELY_URL = os.environ.get("NOTELY_URL", "http://notely")
 
 app = FastAPI()
+# Prometheus-Endpunkt: erfüllt das Versprechen der Scrape-Annotation im Deployment.
+app.mount("/metrics", make_asgi_app())
 
 
 @app.get("/healthz")
