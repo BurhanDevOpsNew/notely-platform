@@ -1040,10 +1040,51 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     Receiver; Routing nach `severity` (critical → anderer Kanal) wäre die
     Fortsetzung.
 
+29. **Alarm-Routing nach severity** (Etappe 30, Branch `feature/alert-routing`) — in
+    `alertmanager.yml` bekommt die Wurzel-`route:` ein Kind:
+    ```yaml
+    routes:
+      - matchers: [severity="critical"]
+        receiver: critical
+        group_wait: 10s
+    ```
+    plus zweiter Receiver `critical` (gleicher webhook-logger, Pfad `/critical`).
+
+    **`route:` ist ein Baum:** ein Alarm läuft von der Wurzel abwärts, das erste
+    passende Kind gewinnt, sonst bleibt die Wurzel zuständig. Kinder **erben** alles,
+    was sie nicht überschreiben (`group_by`, Intervalle) — im Kind steht nur das
+    Delta. Unterschieden werden die Zustellungen am `"receiver"`-Feld der Payload;
+    der Logger brauchte keine Änderung.
+
+    **Kontrolle vor dem Commit — mit dem echten Parser:** `amtool check-config` aus
+    exakt dem Image, das im Cluster läuft:
+    `podman run --rm -v "$PWD/k8s/monitoring:/cfg:ro" --entrypoint amtool
+    docker.io/prom/alertmanager:v0.27.0 check-config /cfg/alertmanager.yml`
+    → `SUCCESS`, 2 receivers. (Mount nach `/cfg`, nicht `/tmp`; Pfad unter `$HOME`
+    wegen der Podman-VM.)
+
+    **Bewiesen mit Vorher/Nachher-Messung im Logger (kubelet-Zeitstempel):**
+    - Vorher (alte Config, ein Topf): beide Proben `receiver: default`, 14 ms
+      auseinander nach ~30 s.
+    - Nachher: critical-Probe nach **~10 s** an `receiver: critical`, warning-Probe
+      nach **~30 s** an `receiver: default` — **20 s Abstand = exakt die Differenz
+      der `group_wait`-Werte**, und der als zweites gefeuerte critical überholte den
+      warning. Wichtig fürs Design der Messung: die zwei Proben brauchten
+      **verschiedene Namespaces**, sonst hätte die `inhibit_rule` den warning
+      verschluckt (Etappe 17).
+
+    **Zwei Fehlerklassen nebenbei:** (1) Die Proben liefen zuerst **vor** dem Merge —
+    vierte Wiederholung von „der Cluster kann Git nicht voraus sein", diesmal als
+    nützliche Baseline umgedeutet. (2) **Toter Follower:** `kubectl logs -f` hält
+    eine Dauerverbindung und stirbt lautlos (Laptop-Schlaf, Netzwechsel) — „keine
+    neuen Zeilen" heißt nicht „keine neuen Ereignisse". Gegenprobe:
+    `kubectl logs --tail=5 --timestamps` ohne `-f`.
+
 ## Wo wir gerade stehen
-`main` = `7ed07ed` (Bot-Pin auf `sha-f2fa216…` nach Merge PR #49). Arbeitsverzeichnis
+`main` = `a98097e` (Bot-Pin auf `sha-9fa678c…` nach Merge PR #51). Arbeitsverzeichnis
 sauber, keine offenen Branches. Prometheus überwacht auch ArgoCD (3 Targets, 6 Regeln).
-Alarme werden an den webhook-logger zugestellt. **Alle offenen Punkte sind erledigt.** ArgoCD: `Synced / Healthy`. Secrets laufen über KSOPS;
+Alarme werden nach severity geroutet und an den webhook-logger zugestellt (critical
+nach 10 s, Rest nach 30 s). **Alle offenen Punkte sind erledigt.** ArgoCD: `Synced / Healthy`. Secrets laufen über KSOPS;
 `notely-db` und `postgres-credentials` tragen die ArgoCD-`tracking-id`.
 
 **Die GitOps-Schleife ist geschlossen:** Merge → CI baut, scannt und pusht multi-arch →
@@ -1054,7 +1095,7 @@ App rollt aus. Kein Deploy-Befehl mehr von Hand — auch Secrets nicht mehr (Eta
 startet aber keinen Workflow — `newTag` und laufendes Image bleiben unverändert.
 
 Nächster Schritt: frei — Kandidaten: neue Ausfall-Übung, Prometheus auf PVC,
-Alarm-Routing nach severity, oder ein zweiter Service neben notely.
+oder ein zweiter Service neben notely.
 Beim Start den echten Zustand gegen diese Notiz prüfen:
 `git fetch && git log --oneline -2 origin/main`, `git branch -vv`,
 `kubectl get application -n argocd`, laufendes Image über
