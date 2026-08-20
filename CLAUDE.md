@@ -1080,11 +1080,73 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     neuen Zeilen" heißt nicht „keine neuen Ereignisse". Gegenprobe:
     `kubectl logs --tail=5 --timestamps` ohne `-f`.
 
+29. **Zweiter Service: notely-stats** (Etappe 31, Branches `feature/stats-service`,
+    `feature/stats-deploy`, `fix/stats-metrics`) — aus „einem Deployment" wird „ein
+    Cluster mit Diensten". Vier Teiletappen, je ein PR.
+
+    **A — Der Dienst** (`stats/`: eigene `app/main.py`, `requirements.txt`, `Dockerfile`):
+    `GET /stats` fragt notely über **dessen HTTP-API** ab (`httpx`, `NOTELY_URL`-Default
+    `http://notely` — Service-Port 80, kein Port im URL). **Services teilen APIs, keine
+    Tabellen**: ein Direktzugriff auf Postgres hätte stats ans *Schema* gekettet (jede
+    Migration ein Risiko für einen fremden Dienst) statt an den *Vertrag*. `/readyz`
+    prüft notely (fremde Abhängigkeit → Readiness, nie Liveness — Etappe 5 von der
+    anderen Seite), `/stats` antwortet bei totem Upstream **502** (Bad Gateway),
+    `/readyz` **503**. Nur 3 Abhängigkeiten — kein SQLAlchemy, kein Alembic.
+    Lokal bewiesen in zwei Stufen: ohne notely → korrektes 502; mit
+    `-e NOTELY_URL=http://host.containers.internal:8080` gegen den echten Cluster →
+    echte Zahlen quer durch Podman-VM, Mac und kind-Ingress.
+
+    **B — CI-Matrix** (`strategy.matrix.include` mit `service`/`context`/`suffix`):
+    ein Job-Skelett, zwei parallele Läufe, zwei GHCR-Images
+    (`notely-platform`, `notely-platform-stats`). Die vier Stolpersteine:
+    (1) `upload-artifact@v4` **scheitert hart** bei doppeltem Namen → `sbom-<service>`.
+    (2) gha-Cache braucht `scope=<service>`, sonst überschreiben sich die Läufe.
+    (3) **Der Pin-Step musste aus dem Matrix-Job raus** — zwei parallele Läufe hätten
+    gleichzeitig nach main gepusht (Race). Jetzt eigener Job `pin` mit `needs: image`
+    (wartet auf alle Matrix-Läufe); nur er hat `contents: write`, der image-Job gibt
+    es ab. Das Pin-`sed` trifft **alle** `newTag`-Zeilen — gewollt, alle Images tragen
+    denselben Commit-sha. (4) Im PR erscheint `Pin overlays` als **Skipped** — die
+    `if: github.event_name == 'push'`-Bedingung als sichtbare Kachel.
+    **GHCR legt neue Pakete privat an** — einmalig auf Public stellen (Profil →
+    Packages → Danger Zone), Beweis per anonymem Token + `tags/list` → 200.
+
+    **C — Manifeste** (`k8s/stats/` + Ingress-Pfad + 3 Overlays): notely-Vorbild mit
+    bewussten Abweichungen — `replicas: 1` (zustandsloser Aggregator), **kein
+    `envFrom`** (keine DB, kein Secret), halbierte Ressourcen. Ingress: `/stats` →
+    notely-stats, Rest → notely (nginx nimmt den längsten Prefix). Endbeweis:
+    `curl localhost:8080/stats` → Ingress → stats-Pod → notely-Service → notely-Pod
+    → Postgres, ausgeliefert nur durch die Schleife.
+
+    **D — Der eingebaute Fehler und sein Geschenk:** Das stats-Deployment bekam
+    Scrape-Annotations, aber die App hatte **keinen `/metrics`-Endpunkt** (kein
+    prometheus-client). Discovery fand den Pod, Target `down`, und nach 2 Minuten
+    feuerte `NotelyTargetDown` — **der erste echte, organisch entstandene Alarm des
+    Projekts**, über den critical-Zweig (10 s) im webhook-logger. **Fehlerklasse:
+    Deklaration und Implementierung auseinander** — die Annotation ist ein
+    Versprechen, das der Code halten muss. Erkennungsmerkmal echter Alarme:
+    **`generatorURL` ist gefüllt** (Link auf die PromQL-Abfrage); Kunstalarme per
+    API haben es leer. Fix: `prometheus-client` + `app.mount("/metrics",
+    make_asgi_app())` — nach dem Merge Target `up`, und die Entwarnung kam als
+    `resolved` über den critical-Receiver. Erkennung → Routing → Zustellung →
+    Entwarnung, einmal komplett an einem echten Fall.
+
+    **Nebenbefunde:** (1) `Connection reset by … port 22` beim Push — die Ursache
+    steht in der **ersten** Zeile (TCP/SSH), nicht in Gits „Zugriffsberechtigungen"-
+    Ratschlag darunter; der Push war trotzdem durch (nur die Antwort ging verloren),
+    `Everything up-to-date` beim Retry bewies es. Ausweich für blockierten Port 22:
+    `ssh.github.com:443` (`~/.ssh/config`). (2) `{"detail":"Not Found"}` auf
+    `/stats` vor dem Deploy: **FastAPIs** 404-Format verriet, dass notely
+    geantwortet hat — der Ingress kannte den Pfad noch nicht. Wer antwortet, sagt
+    dir, wo du stehst. (3) `command not found` nach Terminalwechsel = fehlende
+    venv-Aktivierung, nicht fehlendes Programm.
+
 ## Wo wir gerade stehen
-`main` = `a98097e` (Bot-Pin auf `sha-9fa678c…` nach Merge PR #51). Arbeitsverzeichnis
-sauber, keine offenen Branches. Prometheus überwacht auch ArgoCD (3 Targets, 6 Regeln).
+`main` = `1d297bd` (Bot-Pin auf `sha-a707ba3…` nach Merge PR #55). Arbeitsverzeichnis
+sauber, keine offenen Branches. **Zwei Services**: notely (2 Replicas) und notely-stats
+(1 Replica, `/stats` am Ingress). Prometheus: 4 Targets up, 6 Regeln.
 Alarme werden nach severity geroutet und an den webhook-logger zugestellt (critical
-nach 10 s, Rest nach 30 s). **Alle offenen Punkte sind erledigt.** ArgoCD: `Synced / Healthy`. Secrets laufen über KSOPS;
+nach 10 s, Rest nach 30 s). **Neuer offener Punkt: die CI testet stats nicht** (kein pytest, kein Laufzeit-Check
+— nur ruff und der Image-Build). Ein grüner PR beweist für stats nichts. ArgoCD: `Synced / Healthy`. Secrets laufen über KSOPS;
 `notely-db` und `postgres-credentials` tragen die ArgoCD-`tracking-id`.
 
 **Die GitOps-Schleife ist geschlossen:** Merge → CI baut, scannt und pusht multi-arch →
