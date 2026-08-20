@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - ../../base
+  - ../../stats
 
 configMapGenerator:
   - name: notely-config
@@ -17,6 +18,9 @@ secretGenerator:
 images:
   - name: notely
     newName: ghcr.io/burhandevopsnew/notely-platform
+    newTag: sha-5b8bc85f93cfa9a17c0e3f86ea080baec04d21f9
+  - name: notely-stats
+    newName: ghcr.io/burhandevopsnew/notely-platform-stats
     newTag: sha-5b8bc85f93cfa9a17c0e3f86ea080baec04d21f9
 
 replicas:

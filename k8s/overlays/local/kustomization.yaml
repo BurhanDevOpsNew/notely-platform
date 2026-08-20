@@ -5,6 +5,7 @@ resources:
   - ../../base
   - ../../postgres
   - ../../monitoring
+  - ../../stats
 
 configMapGenerator:
   - name: notely-config
@@ -21,6 +22,8 @@ secretGenerator:
 
 images:
   - name: notely
+    newTag: dev
+  - name: notely-stats
     newTag: dev
 
 replicas:
