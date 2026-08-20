@@ -11,6 +11,7 @@ Die Anwendung selbst ist bewusst schlicht. Interessant ist, was darum herum steh
 | Bereich | Umsetzung |
 |---|---|
 | API | FastAPI, CRUD auf `/notes`, `PATCH` für Teiländerungen, `/healthz`, `/readyz`, `/metrics` |
+| Zweiter Service | `notely-stats`: fragt notely per HTTP ab, liefert `/stats`-Kennzahlen — eigenes Image, eigener Ingress-Pfad |
 | Datenbank | PostgreSQL 17, SQLAlchemy 2.0, Alembic-Migrationen |
 | Container | Multi-Stage-Dockerfile, `python:3.12-slim`, non-root (uid 10001), read-only Dateisystem |
 | CI | GitHub Actions: ruff + pytest gegen echtes Postgres, Trivy-Tor, SBOM, Multi-Arch-Push (amd64 + arm64) nach GHCR, sha-Tag zurück nach Git |
@@ -188,10 +189,12 @@ erst beim Deploy.
 
 ```
 app/            FastAPI-Anwendung, SQLAlchemy-Modelle, Observability
+stats/          zweiter Service: eigene App, requirements und Dockerfile
 alembic/        Migrationen (env.py liest DATABASE_URL aus der Umgebung)
 k8s/base/       Deployment, Service, Ingress, Migrations-Job
 k8s/postgres/   PVC, Deployment, Service
-k8s/monitoring/ Prometheus, Alertmanager, Scrape-Config, Alarmregeln
+k8s/monitoring/ Prometheus, Alertmanager, Scrape-Config, Alarmregeln, Webhook-Logger
+k8s/stats/      Deployment und Service für notely-stats
 k8s/argocd/     ArgoCD-Application (wird einmalig von Hand angewendet)
 k8s/overlays/   local (Hand-Pfad), prod, argocd (von ArgoCD überwacht)
 docs/           technologien.md — jede eingesetzte Technologie einfach erklärt
