@@ -81,7 +81,8 @@ k8s/base/       deployment.yaml, service.yaml, ingress.yaml, job.yaml, kustomiza
 k8s/postgres/   pvc.yaml, deployment.yaml, service.yaml, kustomization.yaml
 k8s/monitoring/ rbac.yaml, prometheus.yml (Scrape-Config), alerts.yml (Regeln),
                 alertmanager.yml (Routing), deployment.yaml, service.yaml,
-                alertmanager-deployment.yaml (Deployment + Service), kustomization.yaml
+                alertmanager-deployment.yaml (Deployment + Service),
+                webhook-logger.yaml (Alarm-Empfänger, loggt Webhook-POSTs), kustomization.yaml
 k8s/argocd/     application.yaml (ArgoCD-Application, wird von Hand angewendet)
 k8s/overlays/   local/, prod/, argocd/: kustomization.yaml; local+prod mit *.enc.env
                 (SOPS-verschlüsselt, die entschlüsselten *.env sind gitignoriert);
@@ -992,10 +993,57 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     — das ist der Push-Lauf auf `main`, den der Merge selbst auslöst; sein Pin-Commit
     geht als Bot direkt auf `main`. **Nur menschliche Arbeit läuft über PRs.**
 
+28. **Alertmanager-Zustellung: Webhook statt stummer Receiver** (Etappe 29, Branch
+    `feature/alertmanager-webhook`) — die letzte „Bekannte Grenze" geschlossen, ohne
+    Zugangsdaten: `k8s/monitoring/webhook-logger.yaml` (Deployment + Service; ein
+    Inline-Python-`http.server`, der jeden POST als eine JSON-Logzeile druckt) und in
+    `alertmanager.yml` am Receiver `default`:
+    ```yaml
+    webhook_configs:
+      - url: http://webhook-logger:9000/alerts
+        send_resolved: true
+    ```
+    Kurzer DNS-Name reicht — gleicher Namespace (Kontrast zur
+    `argocd-metrics.argocd.svc`-Lektion). Im Logger-Manifest zwei bewusste Details:
+    `python -u` + `flush=True` (sonst puffert stdout und `kubectl logs` schweigt) und
+    `log_message` überschrieben (sonst Apache-Format-Access-Logs neben dem JSON —
+    dasselbe Zwei-Formate-Problem wie `uvicorn.access` in Etappe 10).
+
+    **Bewiesen mit der Stoppuhr, beide Richtungen:** Kunstalarm per POST an
+    `/api/v2/alerts` → nach `group_wait` (30 s) eine Zeile `"status": "firing"` im
+    Logger. Und ohne weiteres Zutun **exakt 5:00 min später** `"status": "resolved"` —
+    per API eingeworfene Alarme ohne `endsAt` verfallen nach `resolve_timeout`
+    (Default 5 min), und `send_resolved: true` stellt die Entwarnung zu. Ein
+    Empfänger, der nur „kaputt" hört und nie „wieder gut", produziert Alarm-Leichen.
+
+    **Die Payload ist der Vertrag, den auch Slack/PagerDuty bekämen:**
+    `groupLabels` = wörtlich unser `group_by`; `alerts[]` mit `fingerprint` (Hash
+    **nur über die Labels** — ein erneut gefeuerter Alarm mit neuem `startsAt` behält
+    denselben Fingerprint, deshalb funktioniert Deduplizierung); `truncatedAlerts`
+    für gekappte Riesen-Gruppen; `externalURL` zeigt den Pod-Namen, weil Alertmanager
+    seine öffentliche Adresse nicht kennt.
+
+    **Zwei Fehler auf dem Weg, beide aus der bekannten Familie:**
+    1. Die neue `resources:`-Zeile landete direkt unter `kind: Kustomization` —
+       **YAML faltet eingerückte Folgezeilen in den Skalar darüber**: `kind` war
+       lautlos der String `Kustomization - webhook-logger.yaml`, die Datei parste
+       fehlerfrei. Gefangen von der Zähl-Kontrolle (4 statt 5 Ressourcen).
+    2. `webhook-logger.yaml` wurde **zweimal leer committet** — `wc -l` sagte `0`,
+       `git show --stat` sagte `| 0`, beides überlesen. Die Ur-Fehlerklasse des
+       Projekts: die Zahl steht in der Ausgabe, der Vergleich mit der angesagten
+       Erwartung (~50) fand nicht statt. Repariert mit `git commit --amend --no-edit`
+       (erlaubt, weil noch nicht gepusht).
+
+    **Grenze:** Zustellung heißt hier „steht in `kubectl logs deploy/webhook-logger`"
+    — ein Kanal, den Menschen abonnieren (Slack, E-Mail), bräuchte Zugangsdaten und
+    bleibt auf dem Firmenrechner bewusst außen vor. Und alles geht an **einen**
+    Receiver; Routing nach `severity` (critical → anderer Kanal) wäre die
+    Fortsetzung.
+
 ## Wo wir gerade stehen
-`main` = `0b5a4e2` (Bot-Pin auf `sha-ec9774b…` nach Merge PR #47). Arbeitsverzeichnis
+`main` = `7ed07ed` (Bot-Pin auf `sha-f2fa216…` nach Merge PR #49). Arbeitsverzeichnis
 sauber, keine offenen Branches. Prometheus überwacht auch ArgoCD (3 Targets, 6 Regeln).
-Image: 224 MB unkomprimiert. **Alle drei offenen Punkte sind erledigt.** ArgoCD: `Synced / Healthy`. Secrets laufen über KSOPS;
+Alarme werden an den webhook-logger zugestellt. **Alle offenen Punkte sind erledigt.** ArgoCD: `Synced / Healthy`. Secrets laufen über KSOPS;
 `notely-db` und `postgres-credentials` tragen die ArgoCD-`tracking-id`.
 
 **Die GitOps-Schleife ist geschlossen:** Merge → CI baut, scannt und pusht multi-arch →
@@ -1006,7 +1054,7 @@ App rollt aus. Kein Deploy-Befehl mehr von Hand — auch Secrets nicht mehr (Eta
 startet aber keinen Workflow — `newTag` und laufendes Image bleiben unverändert.
 
 Nächster Schritt: frei — Kandidaten: neue Ausfall-Übung, Prometheus auf PVC,
-Alertmanager-Receiver mit echter Zustellung, oder ein zweiter Service neben notely.
+Alarm-Routing nach severity, oder ein zweiter Service neben notely.
 Beim Start den echten Zustand gegen diese Notiz prüfen:
 `git fetch && git log --oneline -2 origin/main`, `git branch -vv`,
 `kubectl get application -n argocd`, laufendes Image über
