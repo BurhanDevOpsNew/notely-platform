@@ -300,5 +300,7 @@ im Cluster — der Preis dafür, dass der repo-server selbst entschlüsselt.
   neues Objekt, das alte bleibt liegen. `prune` räumt sie nicht, weil ArgoCD nur löscht, was
   es selbst verwaltet hat. Aufräumen ist bisher Handarbeit.
 - Prometheus schreibt in ein `emptyDir` — Messdaten überleben keinen Pod-Neustart.
-- Der Alertmanager-Receiver hat keine Integration. Alarme sind in der Oberfläche sichtbar,
-  werden aber nirgends zugestellt.
+- Alarme werden an einen clusterinternen Webhook-Logger zugestellt
+  (`kubectl logs deploy/webhook-logger`), inklusive Entwarnung (`send_resolved`).
+  Ein Kanal, den Menschen abonnieren (Slack, E-Mail), bräuchte Zugangsdaten und
+  bleibt bewusst außen vor.
