@@ -56,12 +56,21 @@ jobs:
           DATABASE_URL: postgresql+psycopg://notely:notely@localhost:5432/notely_test
 
   image:
-    name: Build & push image
+    name: Build & push image (${{ matrix.service }})
     needs: quality
     runs-on: ubuntu-latest
 
+    strategy:
+      matrix:
+        include:
+          - service: notely
+            context: .
+            suffix: ""
+          - service: stats
+            context: stats
+            suffix: "-stats"
+
     permissions:
-      contents: write
       packages: write
 
     steps:
@@ -85,7 +94,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/${{ github.repository }}${{ matrix.suffix }}
           tags: |
             type=sha,format=long
             type=ref,event=pr
@@ -93,25 +102,25 @@ jobs:
       - name: Build image for scanning
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ matrix.context }}
           load: true
-          tags: notely:scan
+          tags: ${{ matrix.service }}:scan
           build-args: |
             APP_VERSION=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
       - name: Trivy report (informational)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: notely:scan
+          image-ref: ${{ matrix.service }}:scan
           format: table
           exit-code: 0
 
       - name: Trivy gate (fails on fixable HIGH/CRITICAL)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: notely:scan
+          image-ref: ${{ matrix.service }}:scan
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: 1
@@ -119,30 +128,42 @@ jobs:
       - name: Generate SBOM
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: notely:scan
+          image-ref: ${{ matrix.service }}:scan
           format: cyclonedx
           output: sbom.cdx.json
 
       - name: Upload SBOM
         uses: actions/upload-artifact@v4
         with:
-          name: sbom
+          name: sbom-${{ matrix.service }}
           path: sbom.cdx.json
 
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ matrix.context }}
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             APP_VERSION=${{ github.sha }}
-          cache-from: type=gha
+          cache-from: type=gha,scope=${{ matrix.service }}
+
+  pin:
+    name: Pin overlays
+    needs: image
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Pin the overlays to this image
-        if: github.event_name == 'push'
         run: |
           for f in k8s/overlays/prod/kustomization.yaml k8s/overlays/argocd/kustomization.yaml; do
             sed -i -E "s|^( *newTag: ).*|\1sha-${GITHUB_SHA}|" "$f"
@@ -150,7 +171,6 @@ jobs:
           git --no-pager diff -- k8s/overlays/
 
       - name: Commit the pinned tag
-        if: github.event_name == 'push'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
