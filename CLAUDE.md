@@ -72,7 +72,8 @@ Code → Container → CI/CD → Kubernetes → Observability.
 ## Aufbau
 ```
 app/            main.py (FastAPI), models.py (SQLAlchemy + Pydantic), db.py (Engine/Session)
-tests/          conftest.py, test_api.py (12 Tests, prüfen nur HTTP-Verhalten)
+tests/          conftest.py, test_api.py (notely); stats/tests/ (stats, mit Test-Doppel)
+                zusammen 17 Tests, prüfen nur HTTP-Verhalten
 cluster/        kind-cluster.yaml   (kind-CLI-Config, KEINE k8s-Ressource)
 alembic/        env.py (DB-URL aus Env, target_metadata), script.py.mako (Vorlage,
                 deutsch — sonst kommt jede neue Migration englisch heraus), versions/
@@ -1140,13 +1141,40 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     dir, wo du stehst. (3) `command not found` nach Terminalwechsel = fehlende
     venv-Aktivierung, nicht fehlendes Programm.
 
+30. **stats-Tests in der CI** (Etappe 32, Branch `feature/stats-tests`) — der offene
+    Punkt aus Etappe 31 geschlossen: `stats/tests/test_stats.py`, 5 Tests, Suite
+    12 → **17**. An `ci.yml` änderte sich **nichts** — pytest sammelt den neuen
+    Ordner selbst ein; nur `requirements-dev.txt` bekam `-r stats/requirements.txt`,
+    sonst könnte die CI `stats/app/main.py` nicht importieren.
+
+    **Das Muster: Test-Doppel statt echtem Upstream.** `monkeypatch.setattr(httpx,
+    "get", …)` tauscht die Funktion im httpx-Modul aus — dasselbe Modulobjekt, das
+    die App importiert hat, deshalb wirkt es dort; pytest stellt es nach jedem Test
+    zurück. `FakeResponse` implementiert nur `raise_for_status()` und `json()` —
+    **Test-Doppel dürfen minimal sein**, sie spielen nur die benutzte Oberfläche.
+    Getestet: Zählen (total/archived), toter Upstream → 502 bzw. 503, und
+    `test_metrics_endpoint_exists` als **Regressionstest für den Etappe-31-Incident**
+    — wäre `/metrics` je wieder weg, wird der PR rot statt der Cluster laut.
+
+    **Die Import-Mechanik, die man kennen muss:** pytest läuft von der Testdatei
+    aufwärts, solange `__init__.py` existiert, und legt das erste Verzeichnis ohne
+    eine solche in den Import-Pfad. Deshalb zwei leere Marker: `stats/__init__.py`
+    + `stats/tests/__init__.py` → Repo-Wurzel im Pfad, Modulname
+    `stats.tests.test_stats`. **Ohne `stats/__init__.py` hieße das Modul
+    `tests.test_stats` und kollidierte mit notelys `tests`-Paket.**
+
+    Nebenbei: auch ein reiner Test-Commit deployt bei uns (nicht in `paths-ignore`)
+    — neuer sha, formaler Rollout, kein Schaden. Und ein Tippfehler in der
+    Commit-Nachricht wurde vor dem Push per `git commit --amend -m` repariert —
+    **Nachrichten werden später durchsucht; amend ist gratis, solange nichts
+    gepusht ist.**
+
 ## Wo wir gerade stehen
-`main` = `1d297bd` (Bot-Pin auf `sha-a707ba3…` nach Merge PR #55). Arbeitsverzeichnis
+`main` = `32e0bea` (Merge PR #57) + Bot-Pin dahinter. Arbeitsverzeichnis
 sauber, keine offenen Branches. **Zwei Services**: notely (2 Replicas) und notely-stats
-(1 Replica, `/stats` am Ingress). Prometheus: 4 Targets up, 6 Regeln.
+(1 Replica, `/stats` am Ingress). Prometheus: 4 Targets up, 6 Regeln. 17 Tests.
 Alarme werden nach severity geroutet und an den webhook-logger zugestellt (critical
-nach 10 s, Rest nach 30 s). **Neuer offener Punkt: die CI testet stats nicht** (kein pytest, kein Laufzeit-Check
-— nur ruff und der Image-Build). Ein grüner PR beweist für stats nichts. ArgoCD: `Synced / Healthy`. Secrets laufen über KSOPS;
+nach 10 s, Rest nach 30 s). Der offene Punkt aus Etappe 31 (stats ungetestet) ist durch Etappe 32 geschlossen. ArgoCD: `Synced / Healthy`. Secrets laufen über KSOPS;
 `notely-db` und `postgres-credentials` tragen die ArgoCD-`tracking-id`.
 
 **Die GitOps-Schleife ist geschlossen:** Merge → CI baut, scannt und pusht multi-arch →
