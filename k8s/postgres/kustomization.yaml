@@ -3,5 +3,7 @@ kind: Kustomization
 
 resources:
   - pvc.yaml
+  - backup-pvc.yaml
   - deployment.yaml
   - service.yaml
+  - backup-cronjob.yaml

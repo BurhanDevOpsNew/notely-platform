@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+spec:
+  # cron ist UTC: 02:00 UTC = 04:00/03:00 deutscher Zeit.
+  schedule: "0 2 * * *"
+  # Nie zwei Dumps gleichzeitig - ein haengender Lauf blockiert den naechsten.
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            # postgres:17-alpine laeuft als uid 70; fsGroup macht das frische
+            # Volume dafuer beschreibbar (gleiche Mechanik wie beim Prometheus-PVC).
+            runAsUser: 70
+            fsGroup: 70
+          containers:
+            - name: backup
+              image: postgres:17-alpine
+              envFrom:
+                - secretRef:
+                    name: postgres-credentials
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  export PGPASSWORD="$POSTGRES_PASSWORD"
+                  FILE="/backups/notely-$(date +%Y%m%d-%H%M%S).sql.gz"
+                  pg_dump -h postgres -U "$POSTGRES_USER" "$POSTGRES_DB" | gzip > "$FILE"
+                  echo "geschrieben: $FILE ($(stat -c %s "$FILE") Bytes)"
+                  find /backups -name 'notely-*.sql.gz' -mtime +7 -delete
+                  ls -lh /backups
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: postgres-backups

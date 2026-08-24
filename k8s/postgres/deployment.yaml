@@ -43,6 +43,10 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+            # Backup-PVC auch hier gemountet: macht den Restore zu einem
+            # einzigen kubectl exec. RWO ist node-gebunden, kind hat einen Node.
+            - name: backups
+              mountPath: /backups
           resources:
             requests:
               cpu: 50m
@@ -64,3 +68,6 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: postgres-data
+        - name: backups
+          persistentVolumeClaim:
+            claimName: postgres-backups
