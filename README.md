@@ -302,7 +302,8 @@ im Cluster — der Preis dafür, dass der repo-server selbst entschlüsselt.
 - Generierte ConfigMaps und Secrets sammeln sich an: jeder neue Inhalts-Hash erzeugt ein
   neues Objekt, das alte bleibt liegen. `prune` räumt sie nicht, weil ArgoCD nur löscht, was
   es selbst verwaltet hat. Aufräumen ist bisher Handarbeit.
-- Prometheus schreibt in ein `emptyDir` — Messdaten überleben keinen Pod-Neustart.
+- Prometheus schreibt in ein PVC (`strategy: Recreate` wegen RWO + TSDB-Lock) —
+  Messdaten überleben den Pod-Neustart; bewiesen per `count_over_time` vor/nach Pod-Tod.
 - Alarme werden an einen clusterinternen Webhook-Logger zugestellt
   (`kubectl logs deploy/webhook-logger`), inklusive Entwarnung (`send_resolved`).
   Ein Kanal, den Menschen abonnieren (Slack, E-Mail), bräuchte Zugangsdaten und
