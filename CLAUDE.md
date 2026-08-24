@@ -356,7 +356,7 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     — `le` = *less or equal*, die Histogramm-Klassen; die müssen bei `sum by` erhalten bleiben.
 
     **`emptyDir` statt PVC:** Messdaten sind beim Pod-Neustart weg. Für ein Lernprojekt
-    gewollt, produktiv ein PVC wie bei Postgres.
+    zunächst gewollt; seit Etappe 33 (Punkt 30) durch ein PVC ersetzt.
     Zugriff über `kubectl port-forward svc/prometheus 9090:9090`, kein Ingress.
 
 12. **Alarmregeln** (Etappe 12, Branch `feature/alerts`) — `k8s/monitoring/alerts.yml` mit
@@ -1168,6 +1168,35 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     Commit-Nachricht wurde vor dem Push per `git commit --amend -m` repariert —
     **Nachrichten werden später durchsucht; amend ist gratis, solange nichts
     gepusht ist.**
+
+30. **Prometheus auf PVC: Messdaten überleben den Pod** (Etappe 33, Branch
+    `feature/prometheus-pvc`) — die `emptyDir`-Grenze aus Etappe 11 geschlossen.
+    Drei Dateien in `k8s/monitoring/`: neues `pvc.yaml` (2Gi, RWO), im Deployment
+    `emptyDir` → `persistentVolumeClaim` plus zwei Zeilen, die man begründen können
+    muss, und die Kustomization-Zeile.
+
+    **Die zwei Zeilen:**
+    - `strategy: Recreate` — ein RWO-Volume verträgt keine zwei Pods, und Prometheus
+      sperrt seine TSDB mit einer **`lock`-Datei** (nach dem Mount sichtbar in
+      `/prometheus`: `wal`, `chunks_head`, `lock`). RollingUpdate liefe in einen
+      Crash des neuen Pods. Gleiche Entscheidung wie bei Postgres (Etappe 5).
+    - `fsGroup: 65534` — das frische Volume gehört root; erst die fsGroup macht es
+      für den nobody-User (65534) beschreibbar, als der Prometheus läuft.
+
+    **Bewiesen mit einer Zahl:** Baseline `count_over_time(up{job="argocd"}[15m])`
+    = 49 Samples → Pod getötet → neuer Pod nach ~2 s → dieselbe Abfrage: **60
+    Samples, Fenster lückenlos, umschließt den Todeszeitpunkt.** Läge die TSDB im
+    Pod, stünden dort ~8. Dieselbe Beweisführung wie Etappe 5, Stufe 3 — Zustand
+    liegt im PVC.
+
+    **Korrigierte Vorhersage:** die erwartete Recreate-Messlücke kam nicht — ein
+    manueller Pod-Tod mit sofortigem Reschedule auf demselben Node dauert ~2 s,
+    weniger als das 15-s-Scrape-Raster. Die Lücke ist real bei *Rollouts* (Image
+    ziehen, Config wechseln), nicht bei jedem Neustart. **Auch eine ausgebliebene
+    Lücke ist ein Messergebnis.**
+
+    Nebenbei die Erinnerung an die WAL-Idee: `wal` = write-ahead log, dasselbe
+    Muster wie bei Postgres — erst journalieren, dann strukturiert wegschreiben.
 
 ## Wo wir gerade stehen
 `main` = `32e0bea` (Merge PR #57) + Bot-Pin dahinter. Arbeitsverzeichnis
