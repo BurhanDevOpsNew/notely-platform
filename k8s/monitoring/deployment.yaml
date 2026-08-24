@@ -6,6 +6,10 @@ metadata:
     app: prometheus
 spec:
   replicas: 1
+  # Recreate: das RWO-Volume verträgt keine zwei Pods, und Prometheus sperrt
+  # seine TSDB mit einer Lock-Datei — RollingUpdate liefe in einen Crash.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: prometheus
@@ -18,6 +22,7 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534
+        fsGroup: 65534
       containers:
         - name: prometheus
           image: prom/prometheus:v3.1.0
@@ -52,4 +57,5 @@ spec:
           configMap:
             name: prometheus-config
         - name: data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: prometheus-data
