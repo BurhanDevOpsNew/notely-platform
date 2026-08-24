@@ -197,7 +197,8 @@ k8s/monitoring/ Prometheus, Alertmanager, Scrape-Config, Alarmregeln, Webhook-Lo
 k8s/stats/      Deployment und Service für notely-stats
 k8s/argocd/     ArgoCD-Application (wird einmalig von Hand angewendet)
 k8s/overlays/   local (Hand-Pfad), prod, argocd (von ArgoCD überwacht)
-docs/           technologien.md — jede eingesetzte Technologie einfach erklärt
+docs/           technologien.md — jede Technologie einfach erklärt;
+                runbook-wiederaufbau.md — Disaster Recovery aus Git + Offsite-Dump
 ```
 
 ## Entscheidungen und ihre Begründung
