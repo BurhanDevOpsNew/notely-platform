@@ -79,7 +79,8 @@ alembic/        env.py (DB-URL aus Env, target_metadata), script.py.mako (Vorlag
                 deutsch — sonst kommt jede neue Migration englisch heraus), versions/
 alembic.ini     Konfig; `sqlalchemy.url` ist bewusst auskommentiert
 k8s/base/       deployment.yaml, service.yaml, ingress.yaml, job.yaml, kustomization.yaml
-k8s/postgres/   pvc.yaml, deployment.yaml, service.yaml, kustomization.yaml
+k8s/postgres/   pvc.yaml, backup-pvc.yaml, backup-cronjob.yaml (pg_dump nächtlich),
+                deployment.yaml, service.yaml, kustomization.yaml
 k8s/monitoring/ rbac.yaml, prometheus.yml (Scrape-Config), alerts.yml (Regeln),
                 alertmanager.yml (Routing), deployment.yaml, service.yaml,
                 alertmanager-deployment.yaml (Deployment + Service),
@@ -1197,6 +1198,53 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
 
     Nebenbei die Erinnerung an die WAL-Idee: `wal` = write-ahead log, dasselbe
     Muster wie bei Postgres — erst journalieren, dann strukturiert wegschreiben.
+
+31. **Postgres-Backup als CronJob + geübter Restore** (Etappe 34, Branch
+    `feature/postgres-backup`) — ein PVC ist Verfügbarkeit, kein Backup: gegen
+    `kubectl delete pvc`, kaputte Migration oder Clusterverlust hilft nur eine
+    Kopie außerhalb des Blast-Radius. Vier Teile in `k8s/postgres/`:
+    `backup-pvc.yaml` (1Gi, getrennt vom Daten-PVC — Backup auf derselben „Platte"
+    wäre keins), `backup-cronjob.yaml`, Mount des Backup-PVC **zusätzlich** im
+    Postgres-Pod unter `/backups` (macht den Restore zu einem `kubectl exec`;
+    geht trotz RWO, weil **RWO node-gebunden ist, nicht pod-gebunden** — kind hat
+    einen Node), Kustomization-Zeilen.
+
+    **CronJob = Job + Zeitplan:** `schedule: "0 2 * * *"` (UTC!, Etappe 16),
+    `concurrencyPolicy: Forbid` (nie zwei Dumps parallel),
+    `successful/failedJobsHistoryLimit: 3`, im Template `restartPolicy: Never` +
+    `backoffLimit: 2` wie beim Migrations-Job. Dump: `pg_dump | gzip` mit
+    Credentials per `envFrom` aus `postgres-credentials` (dieselbe Quelle wie die
+    DB — kein neues Secret), Rotation per `find -mtime +7 -delete`,
+    `runAsUser/fsGroup: 70` (dieselbe fsGroup-Lektion wie beim Prometheus-PVC).
+
+    **Testen ohne auf 02:00 zu warten:**
+    `kubectl create job --from=cronjob/postgres-backup NAME` stanzt aus der
+    Vorlage einen Sofort-Job. Erster Lauf: 855 Bytes, Besitzer postgres — fsGroup
+    bewiesen. Kontrolle immer: Byte-Zahl ≠ 0 (die `>`-Falle aus Etappe 15).
+
+    **Die Restore-Übung, drei Akte:** Notiz „Backup-Beweis" angelegt → frisches
+    Backup → Notiz per `DELETE` zerstört (204, Liste leer) → Restore:
+    ```
+    kubectl exec deploy/postgres -- psql -U notely -d notely -c 'DROP TABLE IF EXISTS notes, alembic_version;'
+    kubectl exec deploy/postgres -- sh -c 'gunzip -c /backups/DATEI | psql -U notely -d notely -v ON_ERROR_STOP=1'
+    ```
+    **Warum erst DROP:** der Dump ist reines SQL mit `CREATE TABLE` — in eine
+    lebende DB kollidiert er (PK-Konflikt bricht `COPY` komplett ab). Die
+    „Wo ist die Kopie?"-Frage hat beim Restore die beste Antwort: die Kopie ist
+    das Backup selbst. `alembic_version` gehört mit gedroppt/restauriert — der
+    Migrationsstempel ist Teil des Zustands. `ON_ERROR_STOP=1`, sonst „gelingt"
+    ein Restore auch halb. Beweis: `COPY 2` im Protokoll, und die Notiz kam **mit
+    derselben UUID** zurück — Neuanlage hätte eine neue.
+
+    **Offsite als Handgriff:** `kubectl cp <pod>:/backups/DATEI ./…` — die Kopie
+    liegt außerhalb des Clusters (3-2-1-Regel im Kleinen; in echt: S3 + Object-Lock,
+    per Push aus dem CronJob). Grenze ehrlich benannt: der nächtliche Dump landet
+    im selben Cluster; offsite ist bei uns Handarbeit.
+
+    **Merksatz: ein Backup ohne geübten Restore ist nur eine Datei mit
+    hoffnungsvollem Namen.** Kleinigkeiten: `<Platzhalter>` wörtlich kopiert →
+    zsh liest `<` als Umleitung; vergessene Pipe → curl las `-m json.tool` als
+    eigenes Flag („wer spricht": curl, nicht Python).
 
 ## Wo wir gerade stehen
 `main` = `32e0bea` (Merge PR #57) + Bot-Pin dahinter. Arbeitsverzeichnis

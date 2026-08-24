@@ -12,7 +12,7 @@ Die Anwendung selbst ist bewusst schlicht. Interessant ist, was darum herum steh
 |---|---|
 | API | FastAPI, CRUD auf `/notes`, `PATCH` für Teiländerungen, `/healthz`, `/readyz`, `/metrics` |
 | Zweiter Service | `notely-stats`: fragt notely per HTTP ab, liefert `/stats`-Kennzahlen — eigenes Image, eigener Ingress-Pfad |
-| Datenbank | PostgreSQL 17, SQLAlchemy 2.0, Alembic-Migrationen |
+| Datenbank | PostgreSQL 17, SQLAlchemy 2.0, Alembic-Migrationen, nächtliches `pg_dump`-Backup per CronJob |
 | Container | Multi-Stage-Dockerfile, `python:3.12-slim`, non-root (uid 10001), read-only Dateisystem |
 | CI | GitHub Actions: ruff + pytest gegen echtes Postgres, Trivy-Tor, SBOM, Multi-Arch-Push (amd64 + arm64) nach GHCR, sha-Tag zurück nach Git |
 | Kubernetes | Kustomize (base + Overlays), 2 Replicas, PVC für Postgres, Migration als PreSync-Hook |
