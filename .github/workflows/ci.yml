@@ -7,9 +7,18 @@ on:
       - '**.md'
       - 'docs/**'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   schedule:
     - cron: "0 6 * * 1"
   workflow_dispatch:
+
+# Überholte Läufe desselben Branches abbrechen — aber nie auf main:
+# dort pusht der pin-Job, ein Abbruch mittendrin wäre schlimmer als Wartezeit.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -142,7 +151,9 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
-          platforms: linux/amd64,linux/arm64
+          # arm64 nur, wenn wirklich gepusht wird — im PR wäre die QEMU-Emulation
+          # minutenlange Arbeit für ein Image, das niemand verwendet.
+          platforms: ${{ github.event_name == 'push' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
