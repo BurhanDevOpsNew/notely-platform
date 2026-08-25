@@ -4,6 +4,9 @@ metadata:
   name: notely-stats
   labels:
     app: notely-stats
+  annotations:
+    # Welle 2: stats braucht notely, notely braucht das migrierte Schema.
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   replicas: 1
   selector:

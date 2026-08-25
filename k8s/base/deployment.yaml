@@ -4,6 +4,9 @@ metadata:
   name: notely
   labels:
     app: notely
+  annotations:
+    # Welle 2: erst nach der Migration (Welle 1) ausrollen.
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   replicas: 2
   selector:
