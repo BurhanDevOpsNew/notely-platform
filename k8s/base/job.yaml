@@ -3,8 +3,11 @@ kind: Job
 metadata:
   name: notely-migrate
   annotations:
-    argocd.argoproj.io/hook: PreSync
+    # Sync-Phase statt PreSync: nur dort gelten sync-waves — Welle 0 (Postgres,
+    # Secrets) ist dann garantiert healthy, bevor die Migration startet.
+    argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   backoffLimit: 3
   ttlSecondsAfterFinished: 300
