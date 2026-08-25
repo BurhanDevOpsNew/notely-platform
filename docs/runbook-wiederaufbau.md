@@ -67,25 +67,12 @@ kubectl exec -n argocd deploy/argocd-repo-server -c argocd-repo-server -- \
 # erwartet: /usr/local/bin/ksops und /sops-age/keys.txt
 ```
 
-## 5. Henne-Ei brechen: Secrets + Postgres von Hand vorlegen
+## 5. Die Application anlegen — ab hier übernimmt GitOps
 
-**Ohne diesen Schritt verklemmt sich Schritt 6** (Fund der Übung): der
-PreSync-Migrationsjob läuft vor allen anderen Ressourcen — auf einem leeren
-Cluster fehlen ihm dann Secret und Datenbank, die erst die Sync-Phase
-anlegen würde. Deshalb einmalig von Hand (ArgoCD adoptiert danach):
-
-```bash
-export SOPS_AGE_KEY_FILE="$HOME/.config/sops/age/keys.txt"
-sops -d k8s/overlays/argocd/notely-db.enc.yaml | kubectl apply -f -
-sops -d k8s/overlays/argocd/postgres-credentials.enc.yaml | kubectl apply -f -
-kubectl apply -k k8s/postgres
-kubectl rollout status deploy/postgres --timeout=180s
-```
-
-Dauerlösung (geplant): sync-waves statt PreSync-Hook — dann entfällt
-dieser Schritt.
-
-## 6. Die Application anlegen — ab hier übernimmt GitOps
+Seit Etappe 37 ordnen **sync-waves** den Aufbau selbst: Welle 0 (Secrets via
+ksops, Postgres, Monitoring) → Welle 1 (Migrations-Job, wartet auf pg_isready)
+→ Welle 2 (notely, notely-stats). Der frühere Hand-Schritt „Secrets + Postgres
+vorlegen" ist entfallen — geprüft im Drill vom 2026-08-25.
 
 ```bash
 kubectl apply -f k8s/argocd/application.yaml
@@ -102,7 +89,7 @@ ArgoCD baut jetzt selbstständig: Postgres (+ PVCs), notely, notely-stats,
 Prometheus, Alertmanager, webhook-logger, Backup-CronJob, Ingress —
 alles aus `k8s/overlays/argocd`, Secrets per ksops aus Git.
 
-## 7. Datenbank aus dem Offsite-Dump wiederherstellen
+## 6. Datenbank aus dem Offsite-Dump wiederherstellen
 
 Schema existiert bereits (PreSync-Migration) — Tabellen erst droppen,
 dann den Dump einspielen:
@@ -118,7 +105,17 @@ kubectl exec deploy/postgres -- sh -c \
   'gunzip -c /backups/restore.sql.gz | psql -U notely -d notely -v ON_ERROR_STOP=1'
 ```
 
-## 8. Abschlusskontrollen
+## 7. Abschlusskontrollen
+
+Falls der Sync unterwegs scheiterte (z. B. Netzausfall) und `operation: Failed
+(retried 5 times)` stehen bleibt: die Automatik fasst dieselbe Revision nicht
+mehr an (`Skipping auto-sync: failed previous sync attempt` im Controller-Log).
+Manuell neu anstoßen:
+
+```bash
+kubectl patch application notely -n argocd --type merge \
+  -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}'
+```
 
 ```bash
 curl -s localhost:8080/readyz            # {"status":"ready"}
