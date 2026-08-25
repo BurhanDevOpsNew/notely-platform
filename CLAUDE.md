@@ -1284,8 +1284,32 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     Pod-Tod, nicht vor Clusterverlust) und alle Notizen seit dem letzten Dump
     (RPO). Beides stand vorher im Runbook — und stimmte.
 
+33. **CI-Beschleunigung für PRs** (Etappe 36, Branch `feature/ci-speedup`) — drei
+    Schnitte in `ci.yml`, alle nach dem Prinzip: **überflüssige Arbeit streichen,
+    nie Prüfung** (Trivy-Tor und Tests bleiben unangetastet):
+    1. `platforms:` im Push-Build ist jetzt ein Ausdruck — **arm64 nur bei
+       `push`**. Im PR wurde minutenlang per QEMU ein arm64-Image emuliert
+       (5–10× langsamer als nativ), das bei `push: false` niemand je verwendet.
+    2. `paths-ignore` für `**.md`/`docs/**` auch am **`pull_request`**-Trigger —
+       galt bisher nur für push; jeder Doku-PR lief unnötig durch die volle
+       Maschine. Doku-PRs zeigen jetzt gar keine Checks (kein required check
+       konfiguriert, Merge geht trotzdem).
+    3. `concurrency` mit `cancel-in-progress` **nur für PRs** — überholte Läufe
+       sterben; auf `main` bewusst nicht (ein abgebrochener pin-Job wäre
+       schlimmer als Wartezeit).
+
+    **Die Lektion dahinter:** eine CI kann nicht beurteilen, was *wichtig* ist —
+    nur, welche **Pfade** sich geändert haben. Abstufung: Doku → nichts;
+    `k8s/`-only → Tests, aber Image-Builds wären verzichtbar (offen, bräuchte
+    einen changes-Vorjob mit `if:` an den Matrix-Legs); Code → alles amd64;
+    `main` → alles inkl. arm64 (gekaufte Korrektheit).
+
+    **Messlücke, ehrlich:** Vorher 3 m/2 m für die zwei Build-Kacheln; die
+    Nachher-Zahlen wurden nicht einzeln notiert („zusammen 5 m" ohne Angabe, ob
+    Summe oder Wanduhr). Beim nächsten Code-PR nachtragen.
+
 ## Wo wir gerade stehen
-`main` = `32e0bea` (Merge PR #57) + Bot-Pin dahinter. Arbeitsverzeichnis
+`main` = `46c732b` (Bot-Pin nach Merge PR #65). Arbeitsverzeichnis
 sauber, keine offenen Branches. **Zwei Services**: notely (2 Replicas) und notely-stats
 (1 Replica, `/stats` am Ingress). Prometheus: 4 Targets up, 6 Regeln. 17 Tests.
 Alarme werden nach severity geroutet und an den webhook-logger zugestellt (critical
