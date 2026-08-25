@@ -11,7 +11,7 @@ Szenario: der kind-Cluster ist verloren (gelöscht, kaputt, neuer Rechner).
 Ohne den age-Schlüssel sind die Secrets in Git wertlos — er ist das eine
 Artefakt, das niemals nur im Cluster liegen darf.
 
-Erwartete Dauer: ~15 Minuten. Reihenfolge ist verbindlich.
+Erwartete Dauer: ~25 Minuten (gemessen am 2026-08-24/25, inkl. Stolpern). Reihenfolge ist verbindlich.
 
 ## 1. Cluster und Ingress
 
@@ -20,17 +20,19 @@ export KIND_EXPERIMENTAL_PROVIDER=podman
 kind create cluster --config cluster/kind-cluster.yaml
 
 kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
-kubectl wait --namespace ingress-nginx \
-  --for=condition=ready pod \
-  --selector=app.kubernetes.io/component=controller \
-  --timeout=180s
+# rollout status statt pod-wait: das Deployment existiert sofort nach dem
+# apply, Pods erst spaeter — "kubectl wait" auf Pods scheitert sonst mit
+# "no matching resources found" (Fund der Uebung vom 2026-08-24).
+kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=180s
 ```
 
 ## 2. ArgoCD installieren (Version gepinnt)
 
 ```bash
 kubectl create namespace argocd
-kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.1/manifests/install.yaml
+# --server-side: die ApplicationSet-CRD sprengt sonst das 256-KiB-Limit der
+# last-applied-Annotation und wird still NICHT angelegt (Fund der Uebung).
+kubectl apply -n argocd --server-side -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.1/manifests/install.yaml
 kubectl -n argocd rollout status deploy/argocd-repo-server --timeout=180s
 ```
 
@@ -65,7 +67,25 @@ kubectl exec -n argocd deploy/argocd-repo-server -c argocd-repo-server -- \
 # erwartet: /usr/local/bin/ksops und /sops-age/keys.txt
 ```
 
-## 5. Die Application anlegen — ab hier übernimmt GitOps
+## 5. Henne-Ei brechen: Secrets + Postgres von Hand vorlegen
+
+**Ohne diesen Schritt verklemmt sich Schritt 6** (Fund der Übung): der
+PreSync-Migrationsjob läuft vor allen anderen Ressourcen — auf einem leeren
+Cluster fehlen ihm dann Secret und Datenbank, die erst die Sync-Phase
+anlegen würde. Deshalb einmalig von Hand (ArgoCD adoptiert danach):
+
+```bash
+export SOPS_AGE_KEY_FILE="$HOME/.config/sops/age/keys.txt"
+sops -d k8s/overlays/argocd/notely-db.enc.yaml | kubectl apply -f -
+sops -d k8s/overlays/argocd/postgres-credentials.enc.yaml | kubectl apply -f -
+kubectl apply -k k8s/postgres
+kubectl rollout status deploy/postgres --timeout=180s
+```
+
+Dauerlösung (geplant): sync-waves statt PreSync-Hook — dann entfällt
+dieser Schritt.
+
+## 6. Die Application anlegen — ab hier übernimmt GitOps
 
 ```bash
 kubectl apply -f k8s/argocd/application.yaml
@@ -82,7 +102,7 @@ ArgoCD baut jetzt selbstständig: Postgres (+ PVCs), notely, notely-stats,
 Prometheus, Alertmanager, webhook-logger, Backup-CronJob, Ingress —
 alles aus `k8s/overlays/argocd`, Secrets per ksops aus Git.
 
-## 6. Datenbank aus dem Offsite-Dump wiederherstellen
+## 7. Datenbank aus dem Offsite-Dump wiederherstellen
 
 Schema existiert bereits (PreSync-Migration) — Tabellen erst droppen,
 dann den Dump einspielen:
@@ -98,7 +118,7 @@ kubectl exec deploy/postgres -- sh -c \
   'gunzip -c /backups/restore.sql.gz | psql -U notely -d notely -v ON_ERROR_STOP=1'
 ```
 
-## 7. Abschlusskontrollen
+## 8. Abschlusskontrollen
 
 ```bash
 curl -s localhost:8080/readyz            # {"status":"ready"}

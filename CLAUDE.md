@@ -1246,6 +1246,44 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     zsh liest `<` als Umleitung; vergessene Pipe → curl las `-m json.tool` als
     eigenes Flag („wer spricht": curl, nicht Python).
 
+32. **Disaster-Recovery-Übung: Cluster gelöscht, aus Git wiederaufgebaut** (Etappe 35,
+    Übung + Branch `docs/dr-drill-findings`) — `kind delete cluster`, übrig blieben
+    Git, GHCR, der Offsite-Dump und der age-Schlüssel. Wiederaufbau entlang
+    `docs/runbook-wiederaufbau.md`; am Ende `Synced / Healthy`, 4/4 Targets, und
+    beide Notizen mit ihren **Original-UUIDs** zurück. Der eigentliche Ertrag sind
+    die **drei Funde**, die jetzt als Fixes im Runbook stehen:
+
+    1. **`kubectl wait` auf Pods direkt nach `apply` scheitert** mit `no matching
+       resources found` — Pods existieren noch nicht. Fix: `rollout status` auf das
+       Deployment (existiert sofort). **Fehlerklasse: Race im eigenen Runbook, die
+       nur der kalte Durchlauf findet.**
+    2. **Die ApplicationSet-CRD wurde nie installiert** — client-seitiges `kubectl
+       apply` scheitert an ihrer Größe (`last-applied`-Annotation > 256 KiB), und
+       zwar **still** mitten in 60 grünen Zeilen. Auch der alte Cluster lief 14 Tage
+       ohne sie. Fix: `kubectl apply --server-side`. **Fehlerklasse: ein Fehler in
+       Zeile 47 von 60 ist unsichtbar — Ausgaben zählen, nicht überfliegen.**
+    3. **Der PreSync-Bootstrap-Deadlock, der wichtigste Fund:** Auf einem
+       jungfräulichen Cluster hängt der Migrations-Hook in
+       `CreateContainerConfigError` — er läuft **vor** allen Ressourcen, aber sein
+       Secret und seine Datenbank entstehen erst **nach** ihm. Nie zuvor gesehen,
+       weil ArgoCD damals einen fertigen Cluster adoptiert hatte: **der
+       GitOps-Bootstrap ab Null war schlicht ungetestet.** Unblock: Secrets per
+       `sops -d | kubectl apply` + `kubectl apply -k k8s/postgres` von Hand,
+       ArgoCD adoptiert danach (tracking-id bewiesen). Jetzt Runbook-Schritt 5.
+       Dauerlösung (nächste Etappe): **sync-waves** — Postgres Welle 0, Migration
+       Welle 1, Apps Welle 2, dann entfällt der Hand-Schritt.
+
+    **Nebenbefunde:** `kubectl create` ist nicht idempotent (`AlreadyExists` bei
+    erledigter Arbeit ist Information, kein Fehler). Die zwei `Error`-Pods des
+    Jobs blieben dank `restartPolicy: Never` als Beweismittel stehen — neben dem
+    `Completed` des dritten Versuchs das lesbare Protokoll des Deadlocks. Und das
+    Runbook versprach 15 Minuten; real waren es ~25 plus die Funde — **auch die
+    Dauer eines Runbooks ist eine Behauptung, die man messen muss.**
+
+    **Was bewusst verloren ging:** die Prometheus-Historie (PVC schützt vor
+    Pod-Tod, nicht vor Clusterverlust) und alle Notizen seit dem letzten Dump
+    (RPO). Beides stand vorher im Runbook — und stimmte.
+
 ## Wo wir gerade stehen
 `main` = `32e0bea` (Merge PR #57) + Bot-Pin dahinter. Arbeitsverzeichnis
 sauber, keine offenen Branches. **Zwei Services**: notely (2 Replicas) und notely-stats
@@ -1261,8 +1299,8 @@ App rollt aus. Kein Deploy-Befehl mehr von Hand — auch Secrets nicht mehr (Eta
 **`paths-ignore` ist bewiesen:** Ein Doku-Merge (nur `.md`/`docs/`) bewegt `main`,
 startet aber keinen Workflow — `newTag` und laufendes Image bleiben unverändert.
 
-Nächster Schritt: frei — Kandidaten: neue Ausfall-Übung, Prometheus auf PVC,
-oder ein zweiter Service neben notely.
+Nächster Schritt: **sync-waves statt PreSync-Hook** (löst den Bootstrap-Deadlock
+aus Etappe 35, Punkt 32) — danach frei.
 Beim Start den echten Zustand gegen diese Notiz prüfen:
 `git fetch && git log --oneline -2 origin/main`, `git branch -vv`,
 `kubectl get application -n argocd`, laufendes Image über
