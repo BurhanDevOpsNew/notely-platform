@@ -18,10 +18,10 @@ secretGenerator:
 images:
   - name: notely
     newName: ghcr.io/burhandevopsnew/notely-platform
-    newTag: sha-510bb2bc473d982fe2982891c30f87c88161c60a
+    newTag: sha-5b2f0f76d5cf3c3c37dcce840b792b99b6edf7fb
   - name: notely-stats
     newName: ghcr.io/burhandevopsnew/notely-platform-stats
-    newTag: sha-510bb2bc473d982fe2982891c30f87c88161c60a
+    newTag: sha-5b2f0f76d5cf3c3c37dcce840b792b99b6edf7fb
 
 replicas:
   - name: notely
