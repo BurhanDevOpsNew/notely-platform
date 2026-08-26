@@ -1375,7 +1375,7 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     „Notely-Plattform", `/api/datasources` → Prometheus verdrahtet.
 
 ## Wo wir gerade stehen
-`main` = `dd61e3d` (Merge PR #71, Grafana-Memory-Fix) + Bot-Pin dahinter. Arbeitsverzeichnis
+`main` = `08e6d23` (Doku-Merge PR #72). Laufendes Image: `sha-dd61e3d…`. Arbeitsverzeichnis
 sauber, keine offenen Branches. **Zwei Services**: notely (2 Replicas) und notely-stats
 (1 Replica, `/stats` am Ingress). Prometheus: 4 Targets up, 6 Regeln. 17 Tests.
 Alarme werden nach severity geroutet und an den webhook-logger zugestellt (critical
