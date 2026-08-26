@@ -4,7 +4,32 @@ metadata:
   name: notely
 spec:
   ingressClassName: nginx
+  # TLS-Terminierung am Rand (Etappe 10): aussen HTTPS, dahinter Klartext.
+  # Das Zertifikat liegt SOPS-verschluesselt in Git (Secret notely-tls).
+  tls:
+    - hosts:
+        - notely.localhost
+      secretName: notely-tls
   rules:
+    # HTTPS-Regel mit Host (SNI waehlt darueber das Zertifikat).
+    - host: notely.localhost
+      http:
+        paths:
+          - path: /stats
+            pathType: Prefix
+            backend:
+              service:
+                name: notely-stats
+                port:
+                  number: 80
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: notely
+                port:
+                  number: 80
+    # Hostlose Regel: http://localhost:8080 funktioniert weiter wie bisher.
     - http:
         paths:
           - path: /stats
