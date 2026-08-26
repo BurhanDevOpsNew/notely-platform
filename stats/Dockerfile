@@ -14,6 +14,9 @@ RUN python -m venv /opt/venv && \
 FROM python:3.12-slim
 
 # Sicherheitsupdates des Basis-Images einspielen (siehe notely-Dockerfile).
+# Cache-Anker: Datum anheben, um die apt-Schicht bewusst neu zu bauen —
+# ein gecachtes "apt-get upgrade" schützt nur so frisch, wie sein Layer alt ist.
+ARG APT_REFRESH=2026-08-26
 RUN apt-get update \
  && apt-get upgrade -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
