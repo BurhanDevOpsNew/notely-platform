@@ -1,0 +1,10 @@
+# Grafana-Provisioning: die Prometheus-Datenquelle als Code.
+# Liegt per ConfigMap unter /etc/grafana/provisioning/datasources/.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true

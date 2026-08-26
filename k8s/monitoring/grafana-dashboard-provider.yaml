@@ -1,0 +1,9 @@
+# Grafana-Provisioning: woher Dashboards geladen werden.
+# Alles unter /var/lib/grafana/dashboards wird beim Start eingelesen.
+apiVersion: 1
+providers:
+  - name: notely
+    type: file
+    disableDeletion: true
+    options:
+      path: /var/lib/grafana/dashboards

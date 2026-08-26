@@ -8,6 +8,7 @@ resources:
   - service.yaml
   - alertmanager-deployment.yaml
   - webhook-logger.yaml
+  - grafana-deployment.yaml
 
 configMapGenerator:
   - name: prometheus-config
@@ -17,3 +18,12 @@ configMapGenerator:
   - name: alertmanager-config
     files:
       - alertmanager.yml
+  - name: grafana-datasources
+    files:
+      - grafana-datasource.yaml
+  - name: grafana-dashboard-provider
+    files:
+      - grafana-dashboard-provider.yaml
+  - name: grafana-dashboards
+    files:
+      - grafana-dashboard-notely.json
