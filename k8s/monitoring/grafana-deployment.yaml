@@ -49,10 +49,12 @@ spec:
           resources:
             requests:
               cpu: 50m
-              memory: 128Mi
+              memory: 256Mi
             limits:
               cpu: 500m
-              memory: 256Mi
+              # 256Mi wurde beim ersten Dashboard-Rendern OOMKilled —
+              # Grafana braucht deutlich mehr Kopffreiheit als unsere Mini-Services.
+              memory: 512Mi
           readinessProbe:
             httpGet:
               path: /api/health
