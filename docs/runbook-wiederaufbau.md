@@ -24,6 +24,12 @@ kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main
 # apply, Pods erst spaeter — "kubectl wait" auf Pods scheitert sonst mit
 # "no matching resources found" (Fund der Uebung vom 2026-08-24).
 kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=180s
+
+# metrics-server (fuer HPA und kubectl top; kind braucht --kubelet-insecure-tls)
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.9.0/components.yaml
+kubectl patch deployment metrics-server -n kube-system --type json \
+  -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+kubectl -n kube-system rollout status deploy/metrics-server --timeout=120s
 ```
 
 ## 2. ArgoCD installieren (Version gepinnt)
