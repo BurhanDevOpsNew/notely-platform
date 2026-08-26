@@ -1374,8 +1374,34 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     Headless-Kontrolle nach dem Sync: `/api/health` → ok, `/api/search` →
     „Notely-Plattform", `/api/datasources` → Prometheus verdrahtet.
 
+36. **HPA: die Replica-Zahl gehört jetzt dem Autoscaler** (Etappe 39, Branch
+    `feature/hpa`) — zwei Bausteine: der **metrics-server** (v0.9.0, von Hand wie
+    ingress-nginx, im kind mit `--kubelet-insecure-tls` per **JSON-Patch** —
+    `"op":"add"` mit Pfad auf `/args/-` hängt ans Array an, was merge-Patch nicht
+    kann; jetzt im Runbook) und `k8s/base/hpa.yaml` (autoscaling/v2, min 2, max 5,
+    Ziel 70 % CPU).
+
+    **Die zwei Denkkerne:**
+    - **HPA rechnet in Prozent der REQUESTS, nicht der Limits.** notely-Request
+      = 50m, idle ≈ 4m (= 8 %) → Ziel 70 % heißt: skaliert ab ~35m Schnitt/Pod.
+      Wer Requests blind kopiert, kalibriert damit unbemerkt seinen Autoscaler.
+    - **HPA und `selfHeal` streiten sich um `spec.replicas`.** Lösung: das Feld
+      ist aus **allen** Manifesten entfernt (base-Deployment + 3 Overlay-
+      Transformer) — was Git nicht deklariert, verwaltet ArgoCD nicht, der HPA
+      ist alleiniger Besitzer. **Wem ein Feld gehört, entscheidet, wer es
+      deklariert.**
+
+    **Bewiesen unter Last** (3 busybox-Dauerschleifen gegen den Service):
+    `13% → 527% → 931%`, REPLICAS `2 → 4 → 5` (Max erreicht — die Leitplanke:
+    lieber ein zähes notely als ein totgeskalter Node), dann bei konstanter Last
+    fallende Prozente (`814 → 503 → 252`) = gleiche Arbeit durch mehr Pods.
+    **Und ArgoCD blieb bei 5 Replicas `Synced/Healthy`** — exakt das Szenario,
+    das `selfHeal` in Etappe 20 noch in Sekunden zurückgedreht hat.
+    Rückbau nach Lastende erst nach ~5 min (*stabilization window* — eingebaute
+    Skepsis gegen Lastlöcher; runter ist absichtlich träger als hoch).
+
 ## Wo wir gerade stehen
-`main` = `08e6d23` (Doku-Merge PR #72). Laufendes Image: `sha-dd61e3d…`. Arbeitsverzeichnis
+`main` = `9296e98` (Bot-Pin nach Merge PR #74, HPA). notely skaliert per HPA (2–5). Arbeitsverzeichnis
 sauber, keine offenen Branches. **Zwei Services**: notely (2 Replicas) und notely-stats
 (1 Replica, `/stats` am Ingress). Prometheus: 4 Targets up, 6 Regeln. 17 Tests.
 Alarme werden nach severity geroutet und an den webhook-logger zugestellt (critical
@@ -1390,7 +1416,7 @@ App rollt aus. Kein Deploy-Befehl mehr von Hand — auch Secrets nicht mehr (Eta
 startet aber keinen Workflow — `newTag` und laufendes Image bleiben unverändert.
 
 Nächster Schritt: frei — das Projekt hat keine bekannten strukturellen Lücken mehr.
-Kür-Kandidaten: HPA, NetworkPolicies, TLS am Ingress. Grafana: erledigt (Punkt 35).
+Kür-Kandidaten: NetworkPolicies, TLS am Ingress. Grafana + HPA: erledigt (35/36).
 Beim Start den echten Zustand gegen diese Notiz prüfen:
 `git fetch && git log --oneline -2 origin/main`, `git branch -vv`,
 `kubectl get application -n argocd`, laufendes Image über
