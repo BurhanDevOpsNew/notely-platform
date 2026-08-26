@@ -1308,8 +1308,39 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     Nachher-Zahlen wurden nicht einzeln notiert („zusammen 5 m" ohne Angabe, ob
     Summe oder Wanduhr). Beim nächsten Code-PR nachtragen.
 
+34. **sync-waves: der Bootstrap ordnet sich selbst** (Etappe 37, Branch
+    `feature/sync-waves` + zweiter DR-Drill) — der PreSync-Deadlock aus Punkt 32
+    ist konstruktiv beseitigt. Drei Annotations-Änderungen: der Migrations-Job
+    wechselt von `hook: PreSync` auf **`hook: Sync` + `sync-wave: "1"`** (Wellen
+    gelten nur innerhalb einer Phase — PreSync läuft komplett vor Welle 0, darum
+    hätte `PreSync` + Welle nichts geändert; als Hook bleibt er, damit
+    `OutOfSync`-Dauerzustand und unveränderliche Job-`spec` gelöst bleiben).
+    Beide App-Deployments bekommen `sync-wave: "2"`; alles ohne Annotation ist
+    Welle 0. **ArgoCD wartet zwischen den Wellen auf healthy** — die Migration
+    startet erst, wenn Postgres' `pg_isready` grün ist. Annotation ans **äußere**
+    `metadata` (ArgoCD liest das Objekt; Merksatz: die Annotation wohnt bei dem,
+    der sie lesen soll — `prometheus.io/scrape` wohnt darum am Pod-Template).
+
+    **Bewiesen durch DR-Drill Nr. 2, ohne Hand-Schritt:** leerer Cluster →
+    4 Bootstrap-Handgriffe → `application.yaml` → Welle 0 baut Secrets+Postgres,
+    Welle 1 migriert (`Complete 1/1` in **6 s**), Welle 2 rollt die Apps.
+    Runbook-Schritt „Henne-Ei brechen" ersatzlos gestrichen.
+
+    **Der unfreiwillige Härtetest:** mitten im Drill fiel das DNS der Podman-VM
+    aus (`lookup registry-1.docker.io … i/o timeout` in den Pod-Events) — Welle 0
+    hing in `ImagePullBackOff`, und die Wellen **hielten korrekt zurück**: kein
+    hängender Migrations-Pod, kein Deadlock, nur geordnetes Warten. Unblock:
+    Images vom Mac per `podman pull` + `kind load` vorbeigeschleust.
+
+    **Zwei Betriebslektionen:** (1) Nach 5 gescheiterten Sync-Versuchen stoppt
+    die Automatik dauerhaft für diese Revision (`Skipping auto-sync: failed
+    previous sync attempt`) — der Neustart ist ein Patch des `operation`-Felds
+    (jetzt im Runbook). (2) Ein `kubectl get` unmittelbar nach einem Patch liest
+    den **alten** Status — der Controller braucht einen Tick; erst der zweite
+    Blick zählt.
+
 ## Wo wir gerade stehen
-`main` = `46c732b` (Bot-Pin nach Merge PR #65). Arbeitsverzeichnis
+`main` = `420dbf7` (Bot-Pin nach Merge PR #67, sync-waves). Arbeitsverzeichnis
 sauber, keine offenen Branches. **Zwei Services**: notely (2 Replicas) und notely-stats
 (1 Replica, `/stats` am Ingress). Prometheus: 4 Targets up, 6 Regeln. 17 Tests.
 Alarme werden nach severity geroutet und an den webhook-logger zugestellt (critical
@@ -1323,8 +1354,8 @@ App rollt aus. Kein Deploy-Befehl mehr von Hand — auch Secrets nicht mehr (Eta
 **`paths-ignore` ist bewiesen:** Ein Doku-Merge (nur `.md`/`docs/`) bewegt `main`,
 startet aber keinen Workflow — `newTag` und laufendes Image bleiben unverändert.
 
-Nächster Schritt: **sync-waves statt PreSync-Hook** (löst den Bootstrap-Deadlock
-aus Etappe 35, Punkt 32) — danach frei.
+Nächster Schritt: frei — das Projekt hat keine bekannten strukturellen Lücken mehr.
+Kür-Kandidaten: Grafana, HPA, NetworkPolicies, TLS am Ingress.
 Beim Start den echten Zustand gegen diese Notiz prüfen:
 `git fetch && git log --oneline -2 origin/main`, `git branch -vv`,
 `kubectl get application -n argocd`, laufendes Image über
