@@ -15,6 +15,9 @@ FROM python:3.12-slim
 
 # Sicherheitsupdates des Basis-Images einspielen. Ohne das erbt man die Paketversionen
 # vom Zeitpunkt, an dem python:3.12-slim gebaut wurde — hier util-linux mit CVE-2026-53615.
+# Cache-Anker: Datum anheben, um die apt-Schicht bewusst neu zu bauen —
+# ein gecachtes "apt-get upgrade" schützt nur so frisch, wie sein Layer alt ist.
+ARG APT_REFRESH=2026-08-26
 RUN apt-get update \
  && apt-get upgrade -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
