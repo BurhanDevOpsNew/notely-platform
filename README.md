@@ -17,7 +17,7 @@ Die Anwendung selbst ist bewusst schlicht. Interessant ist, was darum herum steh
 | CI | GitHub Actions: ruff + pytest gegen echtes Postgres, Trivy-Tor, SBOM, Multi-Arch-Push (amd64 + arm64) nach GHCR, sha-Tag zurück nach Git |
 | Kubernetes | Kustomize (base + Overlays), 2 Replicas, PVC für Postgres, Migration als PreSync-Hook |
 | GitOps | ArgoCD im Cluster: ein Merge nach `main` **ist** das Deployment |
-| Observability | JSON-Logs, Prometheus mit eigener Scrape-Config, Alarmregeln, Alertmanager — überwacht auch ArgoCD selbst (`argocd_app_info`) |
+| Observability | JSON-Logs, Prometheus mit eigener Scrape-Config, Alarmregeln, Alertmanager (überwacht auch ArgoCD), Grafana mit provisioniertem Dashboard |
 | Tests | 17 pytest-Tests (notely + stats), prüfen HTTP-Verhalten statt Interna; stats gegen ein Test-Doppel |
 
 ## Wie deployt wird: GitOps
