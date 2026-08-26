@@ -1339,8 +1339,43 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     den **alten** Status — der Controller braucht einen Tick; erst der zweite
     Blick zählt.
 
+35. **Grafana: Dashboards als Code** (Etappe 38, Branches `feature/grafana`,
+    `fix/refresh-base-packages`, `fix/grafana-memory`) — `grafana/grafana:13.1.2`
+    (Version per Registry-API verifiziert, nie geraten) in `k8s/monitoring/`,
+    komplett **provisioniert statt geklickt**: `grafana-datasource.yaml`
+    (Prometheus, `uid: prometheus`), `grafana-dashboard-provider.yaml` (lädt
+    `/var/lib/grafana/dashboards`), `grafana-dashboard-notely.json` — alle drei
+    per `configMapGenerator` aus Git gemountet. Anonymer Viewer-Zugriff statt
+    Passwort im Repo; Zugriff per `kubectl port-forward svc/grafana 3000:3000`.
+    **Grafana ist dadurch zustandslos**: Pod-Tod → alles kommt aus Git zurück.
+    Was man im Browser zusammenklickt, stirbt mit dem Pod — **was bleiben soll,
+    lebt in Git.** (Unfreiwillig bewiesen, siehe unten.)
+
+    **Drei Zwischenfälle, drei Lektionen:**
+    1. **Das Trivy-Tor schlug während der Etappe zu** — CVE-2026-14456 (OpenSSL,
+       `Status: fixed`) im Basis-Image. Ursache nicht der Code, sondern der
+       **gha-Layer-Cache**: das `apt-get upgrade` im Dockerfile lief seit Wochen
+       nicht mehr, weil seine Schicht gecacht war. **Ein gecachtes `apt-get
+       upgrade` schützt nur so frisch, wie sein Layer alt ist.** Fix: Cache-Anker
+       `ARG APT_REFRESH=<Datum>` in beiden Dockerfiles — Datum anheben = Schicht
+       bewusst neu bauen, selbstdokumentierend.
+    2. **Ein verwaister Branch-Commit** (`feat: grafana …` aus einer früheren
+       Sitzung) basierte auf dem main *vor* dem OpenSSL-Fix — sein PR wäre am
+       Tor gescheitert. Fix: `git rebase main` + `git push --force-with-lease`
+       (überschreibt den Server-Branch nur, wenn er noch auf dem zuletzt
+       gesehenen Stand ist — der Sicherheitsgurt, der `--force` fehlt).
+    3. **OOMKilled beim ersten Dashboard-Rendern:** die vom notely-Vorbild
+       geerbten 256Mi-Limits waren für Grafana zu knapp — „kurz drin, dann tot",
+       im Pod-Status `RESTARTS: 1, LASTSTATE: OOMKilled`. Fix: 512Mi.
+       **Fehlerklasse: Limits vom falschen Vorbild kopiert — Ressourcen-Grenzen
+       denkt man pro Anwendung, nicht pro Projekt.** Der OOM-Neustart bewies
+       nebenbei die Zustandslosigkeit: das Dashboard kam provisioniert zurück.
+
+    Headless-Kontrolle nach dem Sync: `/api/health` → ok, `/api/search` →
+    „Notely-Plattform", `/api/datasources` → Prometheus verdrahtet.
+
 ## Wo wir gerade stehen
-`main` = `420dbf7` (Bot-Pin nach Merge PR #67, sync-waves). Arbeitsverzeichnis
+`main` = `dd61e3d` (Merge PR #71, Grafana-Memory-Fix) + Bot-Pin dahinter. Arbeitsverzeichnis
 sauber, keine offenen Branches. **Zwei Services**: notely (2 Replicas) und notely-stats
 (1 Replica, `/stats` am Ingress). Prometheus: 4 Targets up, 6 Regeln. 17 Tests.
 Alarme werden nach severity geroutet und an den webhook-logger zugestellt (critical
@@ -1355,7 +1390,7 @@ App rollt aus. Kein Deploy-Befehl mehr von Hand — auch Secrets nicht mehr (Eta
 startet aber keinen Workflow — `newTag` und laufendes Image bleiben unverändert.
 
 Nächster Schritt: frei — das Projekt hat keine bekannten strukturellen Lücken mehr.
-Kür-Kandidaten: Grafana, HPA, NetworkPolicies, TLS am Ingress.
+Kür-Kandidaten: HPA, NetworkPolicies, TLS am Ingress. Grafana: erledigt (Punkt 35).
 Beim Start den echten Zustand gegen diese Notiz prüfen:
 `git fetch && git log --oneline -2 origin/main`, `git branch -vv`,
 `kubectl get application -n argocd`, laufendes Image über
