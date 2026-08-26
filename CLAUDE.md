@@ -1400,8 +1400,39 @@ Dockerfile, .dockerignore, requirements.txt, requirements-dev.txt
     Rückbau nach Lastende erst nach ~5 min (*stabilization window* — eingebaute
     Skepsis gegen Lastlöcher; runter ist absichtlich träger als hoch).
 
+37. **NetworkPolicies: die Architekturregel wird Netz-Zwang** (Etappe 40, Branch
+    `feature/network-policies`) — der Cluster war ein offenes Wohnzimmer: jeder
+    Pod erreichte jeden. Jetzt stehen drei Türsteher (`k8s/policies/`):
+    `postgres-ingress` (5432 nur für notely, notely-migrate, postgres-backup —
+    dafür bekam der Backup-CronJob erstmals Pod-Labels), `notely-ingress` (8000
+    nur für ingress-nginx-Namespace, stats, prometheus), `notely-stats-ingress`
+    (8000 nur für ingress-nginx, prometheus). Bewusst **kein** globales
+    default-deny — gezielte Policies vor den Kronjuwelen statt Großbaustelle.
+
+    **Die Falle zuerst gemessen, nicht geglaubt:** NetworkPolicies sind nur
+    Deklarationen — **durchsetzen muss sie der CNI**, und ein CNI ohne Support
+    nimmt sie kommentarlos an und ignoriert sie (Fehlerklasse: Deklaration ohne
+    Durchsetzung, wie die Scrape-Annotation in Etappe 31). Enforcement-Test mit
+    Wegwerf-Pods: nc vor Policy → `ok`, nach leerer Ingress-Policy → Timeout.
+    kindnet setzt durch; erst danach wurde gebaut.
+
+    **Policy-Mechanik:** `podSelector` wählt die zu schützenden Pods,
+    `policyTypes: [Ingress]` + leere/teilweise `ingress:`-Liste = alles andere
+    verboten (Policies sind **additiv erlaubend**, es gibt kein "deny" —
+    was keine Regel erlaubt, ist zu). Namespace-übergreifend selektiert man
+    über `namespaceSelector` mit dem automatischen Label
+    `kubernetes.io/metadata.name`.
+
+    **Bewiesen in beide Richtungen:** positiv — `/readyz` ready, `/stats`
+    liefert Zahlen, 4/4 Prometheus-Targets up, Backup-Job läuft. Negativ —
+    Schurken-Pod gegen notely:80/8000: Timeout; und der Satz der Etappe:
+    `kubectl exec deploy/notely-stats -- python -c "socket…connect(('postgres',5432))"`
+    → **TimeoutError**. stats kann nicht mehr an der API vorbei, selbst wenn
+    sein Code es wollte.
+
 ## Wo wir gerade stehen
-`main` = `9296e98` (Bot-Pin nach Merge PR #74, HPA). notely skaliert per HPA (2–5). Arbeitsverzeichnis
+`main` = `11b6dbf` (Merge PR #76, NetworkPolicies) + Bot-Pin dahinter.
+notely skaliert per HPA (2–5); Postgres und Apps sind per NetworkPolicy geschützt. Arbeitsverzeichnis
 sauber, keine offenen Branches. **Zwei Services**: notely (2 Replicas) und notely-stats
 (1 Replica, `/stats` am Ingress). Prometheus: 4 Targets up, 6 Regeln. 17 Tests.
 Alarme werden nach severity geroutet und an den webhook-logger zugestellt (critical
@@ -1416,7 +1447,7 @@ App rollt aus. Kein Deploy-Befehl mehr von Hand — auch Secrets nicht mehr (Eta
 startet aber keinen Workflow — `newTag` und laufendes Image bleiben unverändert.
 
 Nächster Schritt: frei — das Projekt hat keine bekannten strukturellen Lücken mehr.
-Kür-Kandidaten: NetworkPolicies, TLS am Ingress. Grafana + HPA: erledigt (35/36).
+Letzter Kür-Kandidat: TLS am Ingress. Grafana/HPA/NetworkPolicies: erledigt (35–37).
 Beim Start den echten Zustand gegen diese Notiz prüfen:
 `git fetch && git log --oneline -2 origin/main`, `git branch -vv`,
 `kubectl get application -n argocd`, laufendes Image über
