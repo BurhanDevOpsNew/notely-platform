@@ -25,7 +25,3 @@ images:
     newTag: dev
   - name: notely-stats
     newTag: dev
-
-replicas:
-  - name: notely
-    count: 2

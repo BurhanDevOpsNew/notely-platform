@@ -1,0 +1,22 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: notely
+  labels:
+    app: notely
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: notely
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # Prozent der REQUESTS (50m), nicht der Limits:
+          # skaliert hoch, sobald der Schnitt pro Pod ueber 35m steigt.
+          averageUtilization: 70

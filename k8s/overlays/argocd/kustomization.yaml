@@ -22,7 +22,3 @@ images:
   - name: notely-stats
     newName: ghcr.io/burhandevopsnew/notely-platform-stats
     newTag: sha-dd61e3d9dc0fd7b4aff940857e4a301cb6a491ca
-
-replicas:
-  - name: notely
-    count: 2
