@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - ../../base
+  - ../../policies
   - ../../postgres
   - ../../monitoring
   - ../../stats

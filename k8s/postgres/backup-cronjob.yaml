@@ -13,6 +13,10 @@ spec:
     spec:
       backoffLimit: 2
       template:
+        metadata:
+          labels:
+            # Fuer die NetworkPolicy an Postgres: Backup-Pods duerfen zur DB.
+            app: postgres-backup
         spec:
           restartPolicy: Never
           securityContext:
