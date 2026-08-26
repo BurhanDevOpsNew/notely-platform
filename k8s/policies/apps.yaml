@@ -1,0 +1,44 @@
+# Tuersteher vor notely: hereingelassen werden nur der Ingress-Controller
+# (Nutzertraffic), stats (Service-zu-Service) und Prometheus (Scrapes).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: notely-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: notely
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - podSelector:
+            matchLabels:
+              app: notely-stats
+        - podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: notely-stats-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: notely-stats
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - port: 8000
